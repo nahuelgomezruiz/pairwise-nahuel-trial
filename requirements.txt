@@ -1,0 +1,29 @@
+# Core dependencies
+pandas
+numpy
+scikit-learn
+
+# LLM Integration
+openai
+anthropic>=0.18.0
+google-generativeai>=0.3.0
+
+# Google Sheets Integration
+google-api-python-client
+google-auth
+gspread
+
+# Kaggle API
+kaggle
+
+# Development and Testing
+jupyter
+pytest
+python-dotenv
+
+# Data Processing
+charset-normalizer
+
+# Embeddings and clustering
+sentence-transformers
+umap-learn

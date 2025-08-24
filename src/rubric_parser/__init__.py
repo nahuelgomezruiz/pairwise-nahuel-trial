@@ -1,0 +1,1 @@
+"""Rubric parsing module for extracting grading components."""

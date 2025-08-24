@@ -1,0 +1,86 @@
+1) Driverless cars (n≈5,466; avg score ≈3.17)
+Probable prompt: Argue for or against allowing driverless cars on public roads.
+Awarded more points when:
+Larger development: ≈+180 words, +9 sentences, +0.7 paragraphs vs. low scorers.
+Complex but readable syntax: many clause‑joining commas (≈+10), shorter sentences on average (clearer), slightly harder vocabulary.
+Concrete policy/evidence terms: regulation, liability, safety, accidents, emissions, infrastructure, costs, statistics.
+Argument structure markers: however, furthermore, overall, in addition, because.
+Penalized when:
+Slang/immature register and misspellings (yo, yea, relly, differant, transportantion).
+Vague opinion with few specifics; single‑paragraph rants.
+2) Venus exploration (n≈3,000; avg score ≈2.80)
+Probable prompt: Is studying/exploring Venus a worthy scientific pursuit?
+Awarded more points when:
+Much more development: ≈+254 words, +11.7 sentences, +1.4 paragraphs.
+Evidence‑first vocabulary: atmosphere, pressure, degrees, sulfuric, probes, surface, cost/benefit, hazards, analysis, outweigh.
+Clear stance with reasons and “weighing” language (benefits, risks, trade‑offs, outweighs).
+Penalized when:
+Heavy spelling errors and malformed domain words (vanus, dangrous, cardon, becouse).
+Listing facts without connecting them to a claim.
+3) Electoral College (n≈2,022; avg score ≈3.02)
+Probable prompt: Should the U.S. keep or abolish the Electoral College?
+Awarded more points when:
+Substantial elaboration: ≈+248 words, +13 sentences, +1.5 paragraphs.
+Civic/structural terms: popular vote, minority, representation, federalism, winners‑take‑all, swing states, amendment.
+Reader‑friendly phrasing: shorter sentences (clear), connective logic (therefore, however, additionally).
+Penalized when:
+Basic civics mistakes and name‑mangling (presendent, senitor), formulaic “in conclusion” with no synthesis.
+Emotional appeals without mechanism or evidence.
+4) “Face on Mars” — claim evaluation I (n≈1,320; avg score ≈2.77)
+Probable prompt: Is the “Face on Mars” evidence of aliens or a natural landform?
+Awarded more points when:
+Added structure: ≈+135 words, +8.3 sentences, +1.8 paragraphs.
+Scientific‑image language: resolution, lighting, shadows, angle, pixels, evidence, source, surveyor.
+Refutation markers: illogical, suggests, evidence shows, disprove.
+Penalized when:
+Storylike riffs, names, and irrelevancies (sir, joe, girl), numerology, leap‑to‑aliens reasoning.
+Assertions without image‑quality/photometry reasoning.
+5) “Face on Mars” — claim evaluation II (n≈773; avg score ≈2.99)
+Probable prompt: Use evidence to evaluate the “Face on Mars.”
+Awarded more points when:
+Heavier development: ≈+242 words, +12.6 sentences, +1.8 paragraphs; frequent clause linking (≈+12.6 commas).
+Source‑based argumentation: claims, quotes, otherwise, characteristics, arguments, resolution, Global Surveyor.
+Penalized when:
+Spelling drift and casual tone (professer, pepole, theres, ok).
+Treating “mystery” as evidence; repeating the prompt.
+6) Seagoing Cowboys — persuasive (n≈1,212; avg score ≈2.66)
+Probable prompt: Persuade someone to join the Seagoing Cowboys program (post‑WWII relief work shipping livestock).
+Awarded more points when:
+More but not bloated: ≈+94 words, +6 sentences, +1.4 paragraphs.
+Purposeful persuasion lexicon: responsibilities, help people, needy, program, experience, Europe, learn, serve.
+Concrete benefits + duties; second‑person appeals with reasons.
+Penalized when:
+Drifting into unrelated school/sports anecdotes (football, shouted), boastful tone, thin reasons.
+7) Emotion‑recognition in schools (FACS) (n≈3,081; avg score ≈2.97)
+Probable prompt: Should schools use emotion‑recognition (FACS) technology?
+Awarded more points when:
+Very developed: ≈+266 words, +13.7 sentences, +2.1 paragraphs.
+Policy/ethics vocabulary: privacy, invasive, consent, bias, accuracy, performance, classroom interactions, evidence.
+Balanced weighing with counterargument.
+Penalized when:
+Off‑topic content (Venus/Electoral tokens appearing in low scorers), generic “tech is good/bad” with no schooling link.
+Overclaiming about AI without mechanism.
+8) Seagoing Cowboys — narrative/opinion (n≈433; avg score ≈1.95; max 5)
+Probable prompt: Narrative or personal view about being a seagoing cowboy.
+Awarded more points when:
+Some added length/structure: ≈+24 words, +2.3 sentences, +0.8 paragraphs.
+Concrete episodes and duties; reflective language (what I learned, responsibilities, challenges).
+Penalized when:
+Shouty dialogue and filler (yelled, snake, bye), heavy misspellings, lists of places/people without reflection.
+Plot summary without a lesson or takeaway.
+Cross‑type scoring mechanics observed (consistent patterns)
+Development and organization pay. High scorers write materially more (+~95 to +266 words; +6 to +14 sentences; +~1–2 paragraphs) with clear multi‑paragraph structure.
+Clarity over sheer complexity. High scorers often use more commas (clause chaining) while reducing average sentence length, yielding clearer, more reasoned prose.
+Evidence words correlate with points. Tokens like evidence, data, analysis, resolution, sources, proves, outweighs are overrepresented in top‑quartile essays within the relevant prompts.
+Domain correctness matters. Accurate topical vocabulary (e.g., electors, resolution, atmosphere, liability, privacy) appears far more in high scorers; cross‑topic leakage (e.g., Venus terms inside FACS essays) is a strong penalty signal.
+Conventions are not optional. Low scorers concentrate slang, misspellings (becouse, relly, differant), and rote closers (inconclusion). Even without a dedicated mechanics score, these correlate with lower overall scores.
+Rhetorical scaffolding helps. High scorers disproportionately use discourse markers (however, therefore, overall, additionally, because), which signal structure and reasoning to raters.
+The prompts (reconstructed)
+Argue for or against driverless cars on public roads.
+Is studying/exploring Venus a worthy scientific pursuit?
+Should the U.S. keep or abolish the Electoral College?
+Is the “Face on Mars” evidence of aliens or a natural landform?
+Use evidence to evaluate the “Face on Mars” claim (source‑based).
+Persuade someone to join the Seagoing Cowboys program.
+Should schools use emotion‑recognition (FACS) technology?
+Narrative/personal essay about being a seagoing cowboy.

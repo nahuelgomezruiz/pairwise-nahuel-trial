@@ -1,0 +1,377 @@
+Essay Grading Feature List — Components and Required Ingredients
+=================================================================
+
+Legend
+- [Rule-based]: computed with counting or simple rules; no trained model required
+- [Needs prompt]: requires the actual assignment prompt text
+- [Needs sources]: requires the source texts provided to students
+- [Requires model]: requires a trained language model to judge meaning
+
+Global normalization
+- For every count, also compute a rate per 100 words.
+- Keep total word count as a separate feature.
+- Normalize quotation marks and spacing before counting.
+
+Common ingredients (shared resources you will likely need)
+- essay_text: the student’s full essay as plain text
+- prompt_text: the assignment prompt, if available
+- source_texts: the source passages given to students, if available
+- english_dictionary: a word list for spelling checks
+- frequency_list: word frequencies from a general corpus
+- academic_word_list: a published list of academic vocabulary
+- stopword_list: common function words to ignore when measuring content overlap
+- transition_phrase_list: “however”, “therefore”, “on the other hand”, etc.
+- reporting_verb_list: “states”, “argues”, “claims”, “suggests”, etc.
+- vague_term_list: “things”, “stuff”, “a lot”, “very”, “really”, etc.
+- hedging_word_list: “might”, “may”, “perhaps”, “possibly”, etc.
+- certainty_word_list: “obviously”, “clearly”, “undeniably”, etc.
+- cliche_list: “in today’s society”, “since the dawn of time”, etc.
+- author_title_list: author names and titles of the sources (if provided)
+- syllable_counter: for readability formulas
+
+=================================================================
+A) Length and basic counts  [Rule-based]
+-----------------------------------------------------------------
+1) Total words
+   Ingredients: essay_text
+
+2) Total characters (with and without spaces)
+   Ingredients: essay_text
+
+3) Sentence count
+   Ingredients: essay_text (after reliable sentence splitting)
+
+4) Paragraph count
+   Ingredients: essay_text (after reliable paragraph splitting)
+
+5) Average sentence length (in words)
+   Ingredients: essay_text
+
+6) Median sentence length (in words)
+   Ingredients: essay_text
+
+7) Share of very short sentences (for example, under 10 words)
+   Ingredients: essay_text
+
+8) Share of very long sentences (for example, over 25 words)
+   Ingredients: essay_text
+
+9) Unique word count
+   Ingredients: essay_text
+
+10) Lexical diversity (unique-to-total word ratio)
+    Ingredients: essay_text
+
+11) Words used exactly once (count and rate)
+    Ingredients: essay_text
+
+12) Long word rate (for example, words with 7 or more characters)
+    Ingredients: essay_text
+
+=================================================================
+B) Punctuation and symbol use  [Rule-based]
+-----------------------------------------------------------------
+13) Commas per 100 words
+    Ingredients: essay_text
+
+14) Semicolons per 100 words
+    Ingredients: essay_text
+
+15) Colons per 100 words
+    Ingredients: essay_text
+
+16) Dashes per 100 words (hyphen, en dash, em dash)
+    Ingredients: essay_text
+
+17) Parentheses and brackets per 100 words
+    Ingredients: essay_text
+
+18) Quotation marks (opening, closing, unmatched) per 100 words
+    Ingredients: essay_text
+
+19) Question marks per 100 words
+    Ingredients: essay_text
+
+20) Exclamation marks per 100 words
+    Ingredients: essay_text
+
+21) Ellipses per 100 words
+    Ingredients: essay_text
+
+22) Apostrophes per 100 words
+    Ingredients: essay_text
+
+23) Unbalanced punctuation flags (for example, unmatched quotes or parentheses)
+    Ingredients: essay_text
+
+24) Double punctuation flags (for example, “??”, “!!”)
+    Ingredients: essay_text
+
+25) Double spaces after punctuation (rate)
+    Ingredients: essay_text
+
+=================================================================
+C) Spelling and mechanics  [Rule-based]
+-----------------------------------------------------------------
+26) Spelling error count and rate (dictionary-based)
+    Ingredients: essay_text, english_dictionary
+
+27) Unknown word rate (not found in dictionary)
+    Ingredients: essay_text, english_dictionary
+
+28) Capitalization errors (sentence starts and proper names where obvious)
+    Ingredients: essay_text, english_dictionary (optional for proper names)
+
+29) Quotation punctuation correctness (comma and period placement around quotes)
+    Ingredients: essay_text
+
+30) Repeated characters or words flags (for example, “sooooo”, “very very”)
+    Ingredients: essay_text
+
+31) Consistent spacing and punctuation style (straight vs smart quotes)
+    Ingredients: essay_text
+
+=================================================================
+D) Sentence structure proxies  [Rule-based]
+-----------------------------------------------------------------
+32) Subordinator rate (“because”, “although”, “since”, “while”, “if”, “unless”, “whereas”, “though”, “when”)
+    Ingredients: essay_text, list of subordinating conjunctions
+
+33) Coordinating conjunction rate (“for”, “and”, “nor”, “but”, “or”, “yet”, “so”)
+    Ingredients: essay_text, list of coordinating conjunctions
+
+34) Clause proxy: commas per sentence
+    Ingredients: essay_text
+
+35) Clause proxy: semicolons per sentence
+    Ingredients: essay_text
+
+36) Parallel structure markers in lists (for example, repeated grammatical patterns)
+    Ingredients: essay_text (pattern rules)
+
+=================================================================
+E) Organization and coherence (rule-based proxies)  [Rule-based]
+-----------------------------------------------------------------
+37) Paragraph length statistics (average and spread)
+    Ingredients: essay_text
+
+38) Single-sentence paragraph share and very long paragraph share
+    Ingredients: essay_text
+
+39) Transition phrase rate (for example, “however”, “therefore”, “in contrast”, “as a result”)
+    Ingredients: essay_text, transition_phrase_list
+
+40) Transition phrase variety (number of different transitions used)
+    Ingredients: essay_text, transition_phrase_list
+
+41) Local cohesion: content-word overlap between neighboring sentences
+    Ingredients: essay_text, stopword_list
+
+42) Paragraph-to-paragraph topic continuity (overlap of key words across paragraphs)
+    Ingredients: essay_text, stopword_list
+
+43) Redundancy and repetition (reused phrases or sentences)
+    Ingredients: essay_text
+
+=================================================================
+F) Alignment with the assignment prompt (proxies)  [Needs prompt]
+-----------------------------------------------------------------
+44) Word and phrase overlap with the prompt (rate)
+    Ingredients: essay_text, prompt_text, stopword_list
+
+45) Coverage of required terms listed in the prompt (for example, named items or concepts)
+    Ingredients: essay_text, prompt_text
+
+46) Word-count within the required range from the prompt
+    Ingredients: essay_text, prompt_text
+
+47) Required sections named in the prompt are present (for example, “Summary”, “Analysis”, “Reflection” if explicitly requested)
+    Ingredients: essay_text, prompt_text
+
+=================================================================
+G) Use of sources and evidence (proxies)  [Rule-based; some need sources]
+-----------------------------------------------------------------
+48) Direct quotation count and quoted words as a percentage of the essay
+    Ingredients: essay_text
+
+49) Average quote length
+    Ingredients: essay_text
+
+50) Attribution phrase rate near evidence (“according to”, “the author”, “the article”, “the passage”, “states”, “argues”, “writes”, “reports”)
+    Ingredients: essay_text, reporting_verb_list
+
+51) Number of distinct source mentions by name or title (string match)
+    Ingredients: essay_text, author_title_list  [Needs sources to build the list]
+
+52) Balance across sources (no single source dominates) using counts by source name
+    Ingredients: essay_text, author_title_list  [Needs sources]
+
+53) Quote proportion bands (very low, moderate, very high) to flag over-reliance on quoting
+    Ingredients: essay_text
+
+54) Matching quoted spans against the source texts to verify exactness (string match with fuzziness)
+    Ingredients: essay_text, source_texts  [Needs sources]
+
+55) Overlap of short word sequences with sources to flag patchwriting
+    Ingredients: essay_text, source_texts, stopword_list  [Needs sources]
+
+=================================================================
+H) Reasoning and argument (proxies)  [Rule-based]
+-----------------------------------------------------------------
+56) Counterargument signal phrases (“some may argue”, “critics contend”, “on the other hand”)
+    Ingredients: essay_text, phrase list
+
+57) Refutation signal phrases (“however”, “yet”, “nevertheless”, “this fails to account for”)
+    Ingredients: essay_text, phrase list
+
+58) Reason and explanation markers (“because”, “therefore”, “as a result”, “this shows that”)
+    Ingredients: essay_text, phrase list
+
+59) Consistency of stance markers (rate of contradiction phrases like “but” + reversal within the same paragraph)
+    Ingredients: essay_text
+
+=================================================================
+I) Vocabulary and style  [Rule-based]
+-----------------------------------------------------------------
+60) Rare word rate (based on general frequency list)
+    Ingredients: essay_text, frequency_list
+
+61) Academic vocabulary rate (match against a published academic word list)
+    Ingredients: essay_text, academic_word_list
+
+62) Vagueness rate (matches from vague_term_list)
+    Ingredients: essay_text, vague_term_list
+
+63) Hedging rate (matches from hedging_word_list)
+    Ingredients: essay_text, hedging_word_list
+
+64) Over-certainty rate (matches from certainty_word_list)
+    Ingredients: essay_text, certainty_word_list
+
+65) Cliché rate (matches from cliche_list)
+    Ingredients: essay_text, cliche_list
+
+66) Contraction rate and slang rate
+    Ingredients: essay_text, slang list (optional)
+
+67) Uppercase ratio and digit ratio
+    Ingredients: essay_text
+
+=================================================================
+J) Readability and fluency  [Rule-based]
+-----------------------------------------------------------------
+68) Flesch Reading Ease score
+    Ingredients: essay_text, syllable_counter
+
+69) Flesch–Kincaid Grade Level
+    Ingredients: essay_text, syllable_counter
+
+70) Coleman–Liau index
+    Ingredients: essay_text
+
+71) Gunning fog index
+    Ingredients: essay_text, syllable_counter
+
+72) Dale–Chall score
+    Ingredients: essay_text, simple-word list for Dale–Chall
+
+73) Variation in sentence length (spread)
+    Ingredients: essay_text
+
+=================================================================
+K) Cohesion devices and discourse signals  [Rule-based]
+-----------------------------------------------------------------
+74) Count of examples, definitions, statistics, and quotations labeled with signal words
+    Ingredients: essay_text, phrase lists
+
+75) Metadiscourse signals (“this essay shows”, “the following section”, “in this paragraph”)
+    Ingredients: essay_text, phrase list
+
+76) Lexical cohesion: repetition and rephrasing of key ideas across paragraphs (measured by shared content words)
+    Ingredients: essay_text, stopword_list
+
+=================================================================
+L) Formatting and presentation  [Rule-based; some need prompt]
+-----------------------------------------------------------------
+77) Title present and relevant (non-empty, not generic filler)
+    Ingredients: essay_text
+
+78) Paragraphing present and consistent (line breaks or indent markers)
+    Ingredients: essay_text
+
+79) Consistent punctuation style (straight vs smart quotes, dashes)
+    Ingredients: essay_text
+
+80) Citation list or “Works Cited” present if the prompt requires it
+    Ingredients: essay_text, prompt_text  [Needs prompt]
+
+81) In-text citation names match entries in the reference list
+    Ingredients: essay_text, author_title_list  [Needs sources]
+
+=================================================================
+M) Integrity checks  [Rule-based; some need sources]
+-----------------------------------------------------------------
+82) Duplicate or near-duplicate passages inside the essay (self-duplication)
+    Ingredients: essay_text
+
+83) Overlap of short word sequences with source texts
+    Ingredients: essay_text, source_texts, stopword_list  [Needs sources]
+
+84) Overlap with other essays in the set to flag potential sharing
+    Ingredients: essay_text, other essays’ texts
+
+=================================================================
+N) Task-specific compliance  [Rule-based; needs prompt and sources when applicable]
+-----------------------------------------------------------------
+85) Word count within the range required by the prompt
+    Ingredients: essay_text, prompt_text  [Needs prompt]
+
+86) Number of sources used meets the minimum required by the prompt
+    Ingredients: essay_text, prompt_text, author_title_list  [Needs prompt and sources]
+
+87) Required named sections from the prompt are present
+    Ingredients: essay_text, prompt_text  [Needs prompt]
+
+=================================================================
+O) Minimal model-based components (essential only)  [Requires model]
+-----------------------------------------------------------------
+88) Prompt adherence (topic and task fit)
+    Outputs:
+      - Average similarity between essay sentences and the prompt
+      - Share of sentences that align with the prompt (coverage)
+      - Off-topic rate (sentences below a similarity floor)
+      - Task-match flag (argument, explanation, comparison, as requested)
+    Ingredients: essay_text, prompt_text
+    Method: sentence-level similarity to the prompt and a small classifier for task type
+
+89) Evidence grounding against the source texts
+    Outputs:
+      - Supported-claim rate (claims linked to at least one source passage)
+      - Contradiction rate
+      - Misattribution count (wrong source credited)
+      - Paraphrase-versus-quote support rate
+    Ingredients: essay_text, source_texts, author_title_list
+    Method: passage-level similarity and entailment-style checks between essay claims and source passages
+
+90) Thesis (central claim) detection
+    Outputs:
+      - Thesis present (0 or 1)
+      - Thesis position (from start to end of the essay)
+      - Thesis specificity score (generic versus specific wording)
+    Ingredients: essay_text
+    Method: classifier that finds a single central claim sentence and rates specificity
+
+91) Evidence–explanation linkage
+    Outputs:
+      - Explained-evidence rate (evidence followed by explanation that ties it to a claim)
+      - Orphan-quote rate (evidence with no follow-up explanation)
+      - Counterargument-and-refutation present (0 or 1)
+    Ingredients: essay_text
+    Method: sequence classifier to detect “introduce evidence → explain → connect to claim” patterns
+
+=================================================================
+Notes on implementation
+- Compute both raw counts and rates per 100 words for all countable items.
+- For features that “need the prompt,” include them only when the prompt is available.
+- For features that “need sources,” include them only when the source texts or at least author names are available.
+- Keep all model-based components to the four essentials listed above.
