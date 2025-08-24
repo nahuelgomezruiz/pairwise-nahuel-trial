@@ -94,8 +94,8 @@ class OpenAIClient(BaseAIClient):
     def complete(self, prompt: str, temperature: float = 0.3, **kwargs) -> str:
         """Make a completion request to OpenAI."""
         try:
-            # Check if this is an o3 model that only supports temperature=1.0
-            is_o3_model = 'o3' in self.model.lower()
+            # Check if this is a model that only supports temperature=1.0 (o3 or gpt-5-mini)
+            is_temp_restricted_model = 'o3' in self.model.lower() or 'gpt-5-mini' in self.model.lower()
             
             request_params = {
                 "model": self.model,
@@ -105,14 +105,14 @@ class OpenAIClient(BaseAIClient):
                 ]
             }
             
-            # o3 models only support default temperature (1.0)
-            if not is_o3_model:
+            # Some models only support default temperature (1.0)
+            if not is_temp_restricted_model:
                 request_params["temperature"] = temperature
-            # For o3, we don't set temperature parameter (uses default 1.0)
+            # For restricted models, we don't set temperature parameter (uses default 1.0)
             
             # Add any other kwargs
             for key, value in kwargs.items():
-                if key != "temperature" or not is_o3_model:  # Skip temperature for o3
+                if key != "temperature" or not is_temp_restricted_model:  # Skip temperature for restricted models
                     request_params[key] = value
             
             response = self.client.chat.completions.create(**request_params)
