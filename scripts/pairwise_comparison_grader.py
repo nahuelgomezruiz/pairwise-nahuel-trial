@@ -402,50 +402,72 @@ def write_to_sheets(sheets_client: SheetsClient, spreadsheet_id: str,
         # Update data (new API format: values first, then range)
         worksheet.update(values=data_rows, range_name='A1')
         
+        # Calculate dimensions for formatting
+        total_columns = len(data_rows[0]) if data_rows else 0
+        total_rows = len(data_rows)
+        
         # Format headers
         worksheet.format('A1:Z1', {
             'textFormat': {'bold': True},
             'backgroundColor': {'red': 0.9, 'green': 0.9, 'blue': 0.9}
         })
 
-        # Set column widths - Essay text column wide, others narrow
+        # Set all columns and rows to compact size for overview (user can manually expand to read full text)
         try:
             sheet_id = worksheet.id
-            spreadsheet.batch_update({
-                "requests": [
-                    {
-                        "updateDimensionProperties": {
-                            "range": {
-                                "sheetId": sheet_id,
-                                "dimension": "COLUMNS",
-                                "startIndex": 0,   # Column A (Essay Text)
-                                "endIndex": 1
-                            },
-                            "properties": {"pixelSize": 400},  # Wide for essay text
-                            "fields": "pixelSize"
-                        }
-                    },
-                    {
-                        "updateDimensionProperties": {
-                            "range": {
-                                "sheetId": sheet_id,
-                                "dimension": "COLUMNS",
-                                "startIndex": 1,   # Columns B-F (scores and errors)
-                                "endIndex": 6
-                            },
-                            "properties": {"pixelSize": 60},  # Narrow for numbers
-                            "fields": "pixelSize"
-                        }
+            requests = [
+                # Essay text column (A) - slightly wider for readability
+                {
+                    "updateDimensionProperties": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "dimension": "COLUMNS",
+                            "startIndex": 0,   # Column A
+                            "endIndex": 1      # up to but not including column B
+                        },
+                        "properties": {"pixelSize": 80},  # Slightly wider for essay text
+                        "fields": "pixelSize"
                     }
-                ]
+                },
+                # Score/error columns (B-F) - extra thin for numbers
+                {
+                    "updateDimensionProperties": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "dimension": "COLUMNS",
+                            "startIndex": 1,   # Columns B-F 
+                            "endIndex": 6      # up to but not including column G
+                        },
+                        "properties": {"pixelSize": 40},  # Extra thin for score/error numbers
+                        "fields": "pixelSize"
+                    }
+                },
+                # Make all rows consistently compact height
+                {
+                    "updateDimensionProperties": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "dimension": "ROWS",
+                            "startIndex": 0,   # Start from row 1 (header)
+                            "endIndex": total_rows + 20 if total_rows > 0 else 200  # All rows with generous buffer
+                        },
+                        "properties": {"pixelSize": 21},  # Consistent compact row height
+                        "fields": "pixelSize"
+                    }
+                }
+            ]
+            spreadsheet.batch_update({"requests": requests})
+            
+            # Set text wrapping to CLIP to prevent auto row height expansion  
+            sheet_range = f"A1:Z{total_rows + 20 if total_rows > 0 else 200}"
+            worksheet.format(sheet_range, {
+                "wrapStrategy": "CLIP"  # Prevent text wrapping that expands row height
             })
         except Exception:
             pass
         
         # Apply conditional formatting to color comparison results in one batch
         # Determine the range for sample comparison cells (from comparison start col to the column before QWK)
-        total_columns = len(data_rows[0]) if data_rows else 0
-        total_rows = len(data_rows)
         # New column layout: A:EssayId, B:Actual, C:Pred, D:Rounded, E:AbsErrPred, F:AbsErrRounded, then samples..., last column is QWK
         comparison_start_col_index = 6 - 1  # Column G is index 6 (0-based). But we start comparisons at column 7 (G)? Actually after F -> G (index 6)
         comparison_start_col_index = 6  # 0-based index for column G
