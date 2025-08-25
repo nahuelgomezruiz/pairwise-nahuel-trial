@@ -1,1 +1,0 @@
-"""Prompt generation module for component-based grading."""

@@ -1,1 +1,0 @@
-"""Essay clustering module for identifying essay prompts."""

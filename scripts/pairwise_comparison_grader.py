@@ -12,6 +12,7 @@ import logging
 import argparse
 import pandas as pd
 import numpy as np
+import scipy.optimize
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 from datetime import datetime
@@ -51,12 +52,78 @@ class PairwiseComparisonGrader:
         with open(rubric_path, 'r', encoding='utf-8') as f:
             return f.read()
     
+    @staticmethod
+    def _add_score_borders(worksheet, spreadsheet, data_rows, sheet_id):
+        """Highlight score columns that match each essay's actual score with purple background."""
+        try:
+            if len(data_rows) < 3:  # Need at least header, sample row, and one data row
+                return
+                
+            headers = data_rows[0]
+            
+            # Find score column indices (columns like "1pt", "2pt", etc.)
+            score_columns = {}  # score -> [column_indices]
+            for col_idx, header in enumerate(headers):
+                if isinstance(header, str) and header.endswith('pt'):
+                    try:
+                        score = int(header[:-2])  # Remove "pt" and convert to int
+                        if score not in score_columns:
+                            score_columns[score] = []
+                        score_columns[score].append(col_idx)
+                    except ValueError:
+                        continue
+            
+            if not score_columns:
+                logger.warning("No score columns found in headers")
+                return
+                
+            # Build batch format requests
+            format_requests = []
+            
+            # Process each data row (skip header at index 0 and sample row at index 1)
+            for row_idx in range(2, len(data_rows)):
+                row = data_rows[row_idx]
+                if len(row) < 2:
+                    continue
+                    
+                try:
+                    # Get actual score from column B (index 1)
+                    actual_score = int(float(row[1])) if row[1] else None
+                    if actual_score is None or actual_score not in score_columns:
+                        continue
+                        
+                    # Get all columns for this score
+                    target_columns = score_columns[actual_score]
+                    if not target_columns:
+                        continue
+                        
+                    # Apply purple/blue highlighting to target score cells
+                    for col_idx in target_columns:
+                        # Convert column index to letter
+                        col_letter = chr(65 + col_idx) if col_idx < 26 else f"{chr(65 + col_idx // 26 - 1)}{chr(65 + col_idx % 26)}"
+                        cell_address = f"{col_letter}{row_idx + 1}"  # +1 because sheets are 1-indexed
+                        
+                        # Get current cell value to preserve it
+                        current_value = row[col_idx] if col_idx < len(row) else ''
+                        
+                        # Apply distinctive purple/blue background with bold text
+                        # This will override the existing color but make target scores stand out
+                        worksheet.format(cell_address, {
+                            'backgroundColor': {'red': 0.8, 'green': 0.7, 'blue': 1.0},  # Light purple
+                            'textFormat': {'bold': True, 'fontSize': 11}
+                        })
+                        time.sleep(0.1)  # Small delay to avoid rate limits
+                        
+                except (ValueError, IndexError) as e:
+                    logger.warning(f"Error processing row {row_idx}: {e}")
+                    continue
+                    
+        except Exception as e:
+            logger.warning(f"Failed to add score highlighting: {e}")
+
     def create_comparison_prompt(self, essay1: str, essay2: str, rubric: str) -> str:
         """Create a prompt for pairwise comparison."""
-        prompt = f"""You are a schoolteacher grading student assignments. You need to compare two essays and determine which one is better, or if they are of the same quality.
-
-RUBRIC:
-{rubric}
+        prompt = f"""Compare these two student essays and determine which is better. Infer the objective of the essays and judge which one did a better job.
 
 ESSAY A:
 {essay1}
@@ -64,27 +131,17 @@ ESSAY A:
 ESSAY B:
 {essay2}
 
-Based on the rubric above, please compare these two essays carefully. Consider:
-
-1. First, what score band (1-6) would you assign each essay based on the rubric?
-2. If the essays are of comparable quality, you should likely judge them as SAME quality
-3. Choose A_BETTER or B_BETTER if there is a clear, meaningful difference in quality
-
-Be particularly mindful that essays can have different strengths and weaknesses but still be of similar overall quality. For example, one essay might have better organization while another has stronger evidence, but both could deserve the same final score.
-
-Your response MUST be in the following JSON format:
+Return a JSON object with:
 {{
-    "essay_a_score_band": 1-6,
-    "essay_b_score_band": 1-6,
     "comparison": "A_BETTER" | "B_BETTER" | "SAME",
     "confidence": "HIGH" | "MEDIUM" | "LOW",
-    "reasoning": "Brief explanation of your comparison including why you chose this confidence level"
+    "reasoning": "Brief explanation"
 }}
 
 Where:
-- "A_BETTER" means Essay A is clearly better than Essay B
-- "B_BETTER" means Essay B is clearly better than Essay A  
-- "SAME" means the essays are of similar quality (same score or within 1 point)
+- "A_BETTER" means Essay A is better than Essay B
+- "B_BETTER" means Essay B is better than Essay A  
+- "SAME" means the essays are of similar quality 
 - "confidence" reflects how certain you are about the comparison
 
 Respond ONLY with the JSON object, no additional text."""
@@ -102,15 +159,13 @@ Respond ONLY with the JSON object, no additional text."""
             result = json.loads(response.strip())
             
             # Validate response format
-            required_fields = ['essay_a_score_band', 'essay_b_score_band', 'comparison', 'confidence']
+            required_fields = ['comparison', 'confidence']
             if not all(field in result for field in required_fields):
                 logger.error(f"Missing required fields in response: {result}")
                 return {
                     'comparison': 'ERROR',
                     'reasoning': 'Missing required fields',
-                    'confidence': 'LOW',
-                    'essay_a_score_band': None,
-                    'essay_b_score_band': None
+                    'confidence': 'LOW'
                 }
             
             if result['comparison'] not in ['A_BETTER', 'B_BETTER', 'SAME']:
@@ -118,18 +173,12 @@ Respond ONLY with the JSON object, no additional text."""
                 return {
                     'comparison': 'ERROR',
                     'reasoning': 'Invalid comparison value',
-                    'confidence': 'LOW',
-                    'essay_a_score_band': result.get('essay_a_score_band'),
-                    'essay_b_score_band': result.get('essay_b_score_band')
+                    'confidence': 'LOW'
                 }
             
-            # Auto-coerce to SAME if scores are within 1 point (regardless of confidence)
-            if (result.get('essay_a_score_band') and result.get('essay_b_score_band') and
-                abs(result['essay_a_score_band'] - result['essay_b_score_band']) <= 1 and
-                result['comparison'] != 'SAME'):
-                original_comparison = result['comparison']
-                result['comparison'] = 'SAME'
-                result['reasoning'] += f' [Auto-coerced to SAME: scores within 1 point, was {original_comparison}]'
+            # Add reasoning if not present
+            if 'reasoning' not in result:
+                result['reasoning'] = 'No reasoning provided'
             
             return result
             
@@ -138,18 +187,14 @@ Respond ONLY with the JSON object, no additional text."""
             return {
                 'comparison': 'ERROR',
                 'reasoning': f'JSON parse error: {str(e)}',
-                'confidence': 'LOW',
-                'essay_a_score_band': None,
-                'essay_b_score_band': None
+                'confidence': 'LOW'
             }
         except Exception as e:
             logger.error(f"Error during comparison: {e}")
             return {
                 'comparison': 'ERROR',
                 'reasoning': str(e),
-                'confidence': 'LOW',
-                'essay_a_score_band': None,
-                'essay_b_score_band': None
+                'confidence': 'LOW'
             }
     
     def parallel_compare_with_samples(self, test_essay: str, sample_essays: List[Dict],
@@ -179,9 +224,7 @@ Respond ONLY with the JSON object, no additional text."""
                         'sample_score': sample['score'],
                         'comparison': result['comparison'],
                         'reasoning': result['reasoning'],
-                        'confidence': result.get('confidence', 'UNKNOWN'),
-                        'test_score_band': result.get('essay_a_score_band'),
-                        'sample_score_band': result.get('essay_b_score_band')
+                        'confidence': result.get('confidence', 'UNKNOWN')
                     })
                 except Exception as e:
                     logger.error(f"Comparison failed for sample {sample['essay_id']}: {e}")
@@ -190,15 +233,13 @@ Respond ONLY with the JSON object, no additional text."""
                         'sample_score': sample['score'],
                         'comparison': 'ERROR',
                         'reasoning': str(e),
-                        'confidence': 'LOW',
-                        'test_score_band': None,
-                        'sample_score_band': None
+                        'confidence': 'LOW'
                     })
         
         return comparisons
     
     def calculate_score_from_comparisons(self, comparisons: List[Dict]) -> float:
-        """Calculate final score based on pairwise comparisons."""
+        """Calculate final score based on pairwise comparisons (original method)."""
         # Find essays judged as same quality
         same_quality_scores = []
         better_count = 0
@@ -250,6 +291,206 @@ Respond ONLY with the JSON object, no additional text."""
             else:
                 # Fallback to default
                 return 3.0
+    
+    def calculate_elo_score(self, comparisons: List[Dict], k_factor: float = 32, initial_rating: float = 1500) -> float:
+        """Calculate score using ELO rating system."""
+        student_elo = initial_rating
+        
+        for comp in comparisons:
+            if comp['comparison'] == 'ERROR':
+                continue
+                
+            sample_score = comp['sample_score']
+            # Convert rubric score (1-6) to ELO rating (roughly 1200-1800)
+            sample_elo = 1200 + (sample_score - 1) * 120  # Maps 1->1200, 6->1800
+            
+            # Expected score for student vs sample
+            expected_student = 1 / (1 + 10 ** ((sample_elo - student_elo) / 400))
+            
+            # Actual outcome: 1 if student wins, 0 if loses, 0.5 if tie
+            if comp['comparison'] == 'A_BETTER':
+                actual_score = 1.0
+            elif comp['comparison'] == 'B_BETTER':
+                actual_score = 0.0
+            elif comp['comparison'] == 'SAME':
+                actual_score = 0.5
+            else:  # Should not reach here
+                continue
+                
+            # Update student ELO
+            student_elo += k_factor * (actual_score - expected_student)
+        
+        # Convert back to 1-6 scale
+        return max(1, min(6, 1 + (student_elo - 1200) / 120))
+    
+    def calculate_bradley_terry_score(self, comparisons: List[Dict]) -> float:
+        """Calculate score using Bradley-Terry model with known sample ratings."""
+        # Collect pairwise outcomes
+        outcomes = []
+        sample_scores = []
+        
+        for comp in comparisons:
+            if comp['comparison'] == 'ERROR':
+                continue
+                
+            sample_score = comp['sample_score']
+            sample_scores.append(sample_score)
+            
+            if comp['comparison'] == 'A_BETTER':
+                outcomes.append(1.0)  # Student wins
+            elif comp['comparison'] == 'B_BETTER':
+                outcomes.append(0.0)  # Student loses
+            else:  # SAME
+                outcomes.append(0.5)  # Tie
+        
+        if not outcomes:
+            return 3.0
+        
+        # Use maximum likelihood estimation
+        def negative_log_likelihood(student_strength):
+            ll = 0
+            for i, outcome in enumerate(outcomes):
+                sample_strength = sample_scores[i]  # Use actual score as strength
+                prob_student_wins = student_strength / (student_strength + sample_strength)
+                
+                if outcome == 1.0:  # Student wins
+                    ll += np.log(prob_student_wins + 1e-10)
+                elif outcome == 0.0:  # Student loses
+                    ll += np.log(1 - prob_student_wins + 1e-10)
+                else:  # Tie
+                    ll += np.log(0.5)  # Simplified tie probability
+            return -ll
+        
+        # Optimize to find best student strength
+        try:
+            result = scipy.optimize.minimize_scalar(negative_log_likelihood, bounds=(0.1, 6.0), method='bounded')
+            return np.clip(result.x, 1, 6)
+        except:
+            return 3.0  # Fallback
+    
+    def calculate_weighted_score(self, comparisons: List[Dict]) -> float:
+        """Calculate score using confidence-weighted average."""
+        confidence_weights = {'HIGH': 1.0, 'MEDIUM': 0.7, 'LOW': 0.3}
+        
+        weighted_scores = []
+        total_weight = 0
+        
+        for comp in comparisons:
+            if comp['comparison'] == 'ERROR':
+                continue
+                
+            weight = confidence_weights.get(comp.get('confidence', 'MEDIUM'), 0.5)
+            sample_score = comp['sample_score']
+            
+            if comp['comparison'] == 'SAME':
+                # Direct evidence of this score level
+                weighted_scores.append(sample_score * weight * 2)  # Double weight for exact matches
+                total_weight += weight * 2
+            elif comp['comparison'] == 'A_BETTER':
+                # Student is better than this sample
+                weighted_scores.append((sample_score + 0.5) * weight)  # Slight boost above sample
+                total_weight += weight
+            elif comp['comparison'] == 'B_BETTER':
+                # Student is worse than this sample  
+                weighted_scores.append((sample_score - 0.5) * weight)  # Slight penalty below sample
+                total_weight += weight
+        
+        if total_weight == 0:
+            return 3.0
+            
+        score = sum(weighted_scores) / total_weight
+        return np.clip(score, 1, 6)
+    
+    def calculate_percentile_score(self, comparisons: List[Dict]) -> float:
+        """Calculate score based on percentile position among samples."""
+        better_than = []
+        worse_than = []
+        same_as = []
+        
+        for comp in comparisons:
+            if comp['comparison'] == 'ERROR':
+                continue
+            
+            score = comp['sample_score']
+            if comp['comparison'] == 'A_BETTER':
+                better_than.append(score)
+            elif comp['comparison'] == 'B_BETTER':
+                worse_than.append(score)
+            else:  # SAME
+                same_as.append(score)
+        
+        # If we have exact matches, use those
+        if same_as:
+            return np.mean(same_as)
+        
+        # Calculate percentile position
+        all_sample_scores = better_than + worse_than
+        if not all_sample_scores:
+            return 3.0
+        
+        # Count how many we beat
+        n_beat = len(better_than)
+        n_total = len(all_sample_scores)
+        percentile = n_beat / n_total if n_total > 0 else 0.5
+        
+        # Map percentile to score range
+        min_score = min(all_sample_scores) if all_sample_scores else 1
+        max_score = max(all_sample_scores) if all_sample_scores else 6
+        
+        if min_score == max_score:
+            return min_score
+            
+        estimated_score = min_score + percentile * (max_score - min_score)
+        return np.clip(estimated_score, 1, 6)
+    
+    def calculate_bayesian_score(self, comparisons: List[Dict], prior_mean: float = 3.0, prior_std: float = 1.5) -> float:
+        """Calculate score using Bayesian updating."""
+        # Start with prior belief about student ability
+        posterior_mean = prior_mean
+        posterior_var = prior_std ** 2
+        
+        for comp in comparisons:
+            if comp['comparison'] == 'ERROR':
+                continue
+                
+            sample_score = comp['sample_score']
+            confidence = comp.get('confidence', 'MEDIUM')
+            
+            # Observation noise based on confidence
+            obs_noise = {'HIGH': 0.5, 'MEDIUM': 1.0, 'LOW': 2.0}.get(confidence, 1.0)
+            
+            if comp['comparison'] == 'SAME':
+                # Direct observation of score level
+                likelihood_var = obs_noise ** 2
+                
+                # Bayesian update
+                new_var = 1 / (1/posterior_var + 1/likelihood_var)
+                posterior_mean = new_var * (posterior_mean/posterior_var + sample_score/likelihood_var)
+                posterior_var = new_var
+                
+            elif comp['comparison'] in ['A_BETTER', 'B_BETTER']:
+                # Inequality constraint - use approximate update
+                if comp['comparison'] == 'A_BETTER':
+                    # Student > sample, shift mean upward if current mean is too low
+                    if posterior_mean <= sample_score:
+                        posterior_mean = sample_score + 0.5
+                else:
+                    # Student < sample, shift mean downward if current mean is too high  
+                    if posterior_mean >= sample_score:
+                        posterior_mean = sample_score - 0.5
+        
+        return np.clip(posterior_mean, 1, 6)
+    
+    def calculate_all_scores(self, comparisons: List[Dict]) -> Dict[str, float]:
+        """Calculate scores using all available methods."""
+        return {
+            'original': self.calculate_score_from_comparisons(comparisons),
+            'elo': self.calculate_elo_score(comparisons),
+            'bradley_terry': self.calculate_bradley_terry_score(comparisons),
+            'weighted': self.calculate_weighted_score(comparisons),
+            'percentile': self.calculate_percentile_score(comparisons),
+            'bayesian': self.calculate_bayesian_score(comparisons)
+        }
     
     def grade_cluster_essays(self, cluster_name: str, test_essays_df: pd.DataFrame,
                             sample_essays_df: pd.DataFrame, rubric: str,
@@ -303,7 +544,7 @@ Respond ONLY with the JSON object, no additional text."""
 
 def format_sheets_data(results: List[Dict], sample_essays_df: pd.DataFrame,
                        qwk: float, cluster_name: str) -> Tuple[List[List], List[Dict]]:
-    """Format results for Google Sheets output."""
+    """Format results for Google Sheets output with all scoring methods."""
     
     # Sort samples by score for column headers
     sample_essays_df = sample_essays_df.sort_values('score')
@@ -311,80 +552,280 @@ def format_sheets_data(results: List[Dict], sample_essays_df: pd.DataFrame,
     sample_scores = sample_essays_df['score'].tolist()
     sample_texts = sample_essays_df['full_text'].tolist()
     
+    # Get scoring methods from the first result
+    if results and 'all_scores' in results[0]:
+        scoring_methods = list(results[0]['all_scores'].keys())
+    else:
+        scoring_methods = ['original']  # Fallback to just original
+    
+    # Calculate QWK for each method
+    qwk_scores = {}
+    for method in scoring_methods:
+        method_predictions = []
+        actual_scores_list = []
+        for result in results:
+            if 'all_scores' in result and method in result['all_scores']:
+                method_predictions.append(result['all_scores'][method])
+                actual_scores_list.append(result['actual_score'])
+        
+        if method_predictions:
+            qwk_scores[method] = calculate_qwk(actual_scores_list, method_predictions)
+        else:
+            qwk_scores[method] = 0.0
+    
+    # Find the best QWK method
+    best_method = max(qwk_scores, key=qwk_scores.get) if qwk_scores else 'original'
+    best_qwk = qwk_scores.get(best_method, 0.0)
+    
     # Create headers
-    headers = ['Essay Text', 'Actual Score', 'Predicted Score', 'Rounded Score', 'Abs Err (Pred)', 'Abs Err (Rounded)']
+    headers = ['Essay Text', 'Actual Score']
+    
+    # Add columns for each scoring method
+    for method in scoring_methods:
+        headers.extend([
+            f'{method.title()} Score',
+            f'{method.title()} Rounded'
+        ])
+    
+    # Add comparison columns for each sample
     for sample_id, sample_score in zip(sample_ids, sample_scores):
         score_display = int(sample_score) if isinstance(sample_score, (int, float)) else sample_score
         headers.append(f"{score_display}pt")
-    headers.append('QWK')
     
     # Prepare data rows
     data_rows = [headers]
     
-    # Add row with sample essay texts
-    sample_row = ['SAMPLE ESSAYS', '-', '-', '-', '-', '-']
+    # Add row with sample essay texts (skip method score columns)
+    sample_row = ['SAMPLE ESSAYS', '-']
+    for _ in range(len(scoring_methods) * 2):  # Skip prediction columns
+        sample_row.append('-')
     for sample_text in sample_texts:
         sample_row.append(sample_text)
-    sample_row.append('')  # Empty for QWK column
     data_rows.append(sample_row)
     
     # Cell formats for coloring
     cell_formats = []
+    cell_formats.append([])  # Empty format for header row
     cell_formats.append([])  # Empty format for sample row
     
     for result in results:
         row = [
             result.get('essay_text', result['essay_id']),  # Use full text if available
-            result['actual_score'],
-            f"{result['predicted_score']:.2f}",
-            int(round(result['predicted_score'])),
-            round(abs(float(result['predicted_score']) - float(result['actual_score'])), 2),
-            abs(int(round(result['predicted_score'])) - int(result['actual_score']))
+            result['actual_score']
         ]
+        
+        # Add scores for each method
+        for method in scoring_methods:
+            if 'all_scores' in result and method in result['all_scores']:
+                score = result['all_scores'][method]
+                row.append(f"{score:.2f}")
+                row.append(int(round(score)))
+            else:
+                row.append('-')
+                row.append('-')
         
         # Add comparison results for each sample
         comparisons_dict = {comp['sample_id']: comp for comp in result['comparisons']}
         
+        # Get actual score to mark target columns
+        actual_score = result['actual_score']
+        
         row_formats = []
-        for sample_id in sample_ids:
+        for idx, (sample_id, sample_score) in enumerate(zip(sample_ids, sample_scores)):
+            # Check if this column's score matches the actual score
+            is_target_score = (int(sample_score) == int(actual_score))
+            
             if sample_id in comparisons_dict:
                 comp = comparisons_dict[sample_id]
                 if comp['comparison'] == 'A_BETTER':
                     # Test essay is better - green
-                    row.append('BETTER')
+                    cell_text = '★BETTER★' if is_target_score else 'BETTER'
+                    row.append(cell_text)
                     row_formats.append({'backgroundColor': {'red': 0.7, 'green': 1.0, 'blue': 0.7}})
                 elif comp['comparison'] == 'B_BETTER':
                     # Sample is better - red
-                    row.append('WORSE')
+                    cell_text = '★WORSE★' if is_target_score else 'WORSE'
+                    row.append(cell_text)
                     row_formats.append({'backgroundColor': {'red': 1.0, 'green': 0.7, 'blue': 0.7}})
                 elif comp['comparison'] == 'SAME':
                     # Same quality - yellow
-                    row.append('SAME')
+                    cell_text = '★SAME★' if is_target_score else 'SAME'
+                    row.append(cell_text)
                     row_formats.append({'backgroundColor': {'red': 1.0, 'green': 1.0, 'blue': 0.7}})
                 else:
                     # Error - gray
-                    row.append('ERROR')
+                    cell_text = '★ERROR★' if is_target_score else 'ERROR'
+                    row.append(cell_text)
                     row_formats.append({'backgroundColor': {'red': 0.9, 'green': 0.9, 'blue': 0.9}})
             else:
-                row.append('N/A')
+                cell_text = '★N/A★' if is_target_score else 'N/A'
+                row.append(cell_text)
                 row_formats.append({})
-        
-        # Add QWK (rounded) only in first data row
-        if len(data_rows) == 1:
-            row.append(f"{qwk:.4f}")
-        else:
-            row.append('')
         
         data_rows.append(row)
         cell_formats.append(row_formats)
     
+    # Add QWK summary rows for each method
+    data_rows.append([])  # Empty row for separation
+    cell_formats.append([])
+    
+    # Add header for QWK section
+    qwk_header_row = ['QWK SCORES', '']
+    for method in scoring_methods:
+        qwk_header_row.extend([f'{method.title()}', ''])
+    for _ in sample_ids:
+        qwk_header_row.append('')
+    data_rows.append(qwk_header_row)
+    cell_formats.append([])
+    
+    # Add QWK values row with highlighting for best method
+    qwk_values_row = ['QWK Values', '']
+    qwk_row_formats = []
+    for method in scoring_methods:
+        qwk_value = qwk_scores.get(method, 0.0)
+        qwk_values_row.append(f"{qwk_value:.4f}")
+        qwk_values_row.append('')  # Empty for rounded column
+        
+        # Highlight the best QWK method
+        if method == best_method:
+            # Gold/yellow highlight for best method
+            qwk_row_formats.extend([
+                {'backgroundColor': {'red': 1.0, 'green': 0.843, 'blue': 0.0},
+                 'textFormat': {'bold': True}},
+                {}
+            ])
+        else:
+            qwk_row_formats.extend([{}, {}])
+    
+    for _ in sample_ids:
+        qwk_values_row.append('')
+        qwk_row_formats.append({})
+    
+    data_rows.append(qwk_values_row)
+    cell_formats.append(qwk_row_formats)
+    
+    # Add best method summary
+    best_method_row = ['BEST METHOD', best_method, f'QWK: {best_qwk:.4f}']
+    for _ in range(len(headers) - 3):
+        best_method_row.append('')
+    data_rows.append(best_method_row)
+    cell_formats.append([])
+
+    # Calculate underrated and overrated percentages for each sample
+    # Initialize counters for each sample column
+    underrated_counts = {}  # sample_id -> count
+    overrated_counts = {}   # sample_id -> count
+    to_right_counts = {}    # times sample was to right of target
+    to_left_counts = {}     # times sample was to left of target
+    
+    for sample_id in sample_ids:
+        underrated_counts[sample_id] = 0
+        overrated_counts[sample_id] = 0
+        to_right_counts[sample_id] = 0
+        to_left_counts[sample_id] = 0
+    
+    # Process each data row (skip header and sample rows)
+    for row_idx in range(2, len(data_rows) - 4):  # -4 to skip the QWK summary rows
+        row = data_rows[row_idx]
+        if len(row) < 2 or not row[1]:  # Skip if no actual score
+            continue
+            
+        try:
+            actual_score = int(float(row[1]))  # Get actual score from column B
+            
+            # Process each sample comparison
+            comparison_start_col = 2 + len(scoring_methods) * 2  # Skip essay text, actual score, and method columns
+            
+            for idx, (sample_id, sample_score) in enumerate(zip(sample_ids, sample_scores)):
+                col_idx = comparison_start_col + idx
+                if col_idx >= len(row):
+                    continue
+                    
+                comparison_result = row[col_idx]
+                sample_score_int = int(sample_score) if isinstance(sample_score, (int, float)) else int(sample_score)
+                
+                # Check if sample is to the right (sample score > actual score)
+                if sample_score_int > actual_score:
+                    to_right_counts[sample_id] += 1
+                    # Check if it was labeled as WORSE (underrated)
+                    if 'WORSE' in comparison_result:
+                        underrated_counts[sample_id] += 1
+                
+                # Check if sample is to the left (sample score < actual score)
+                elif sample_score_int < actual_score:
+                    to_left_counts[sample_id] += 1
+                    # Check if it was labeled as BETTER (overrated)
+                    if 'BETTER' in comparison_result and 'WORSE' not in comparison_result:  # Ensure it's BETTER not WORSE
+                        overrated_counts[sample_id] += 1
+                        
+        except (ValueError, IndexError) as e:
+            logger.warning(f"Error processing row {row_idx} for underrated/overrated calculation: {e}")
+            continue
+    
+    # Add empty row for separation
+    data_rows.append([])
+    cell_formats.append([])
+    
+    # Add underrated percentage row
+    underrated_row = ['% Times Underrated', '']
+    underrated_formats = [{}, {}]  # For first two columns
+    for _ in range(len(scoring_methods) * 2):  # Skip method columns
+        underrated_row.append('')
+        underrated_formats.append({})
+    
+    for sample_id, sample_score in zip(sample_ids, sample_scores):
+        if to_right_counts[sample_id] > 0:
+            percentage = (underrated_counts[sample_id] / to_right_counts[sample_id]) * 100
+            underrated_row.append(f'{percentage:.1f}%')
+            # Color code: green for low percentage (good), red for high (bad)
+            if percentage <= 10:
+                underrated_formats.append({'backgroundColor': {'red': 0.7, 'green': 1.0, 'blue': 0.7}})
+            elif percentage <= 25:
+                underrated_formats.append({'backgroundColor': {'red': 1.0, 'green': 1.0, 'blue': 0.7}})
+            else:
+                underrated_formats.append({'backgroundColor': {'red': 1.0, 'green': 0.7, 'blue': 0.7}})
+        else:
+            underrated_row.append('N/A')
+            underrated_formats.append({})
+    
+    data_rows.append(underrated_row)
+    cell_formats.append(underrated_formats)
+    
+    # Add overrated percentage row
+    overrated_row = ['% Times Overrated', '']
+    overrated_formats = [{}, {}]  # For first two columns
+    for _ in range(len(scoring_methods) * 2):  # Skip method columns
+        overrated_row.append('')
+        overrated_formats.append({})
+    
+    for sample_id, sample_score in zip(sample_ids, sample_scores):
+        if to_left_counts[sample_id] > 0:
+            percentage = (overrated_counts[sample_id] / to_left_counts[sample_id]) * 100
+            overrated_row.append(f'{percentage:.1f}%')
+            # Color code: green for low percentage (good), red for high (bad)
+            if percentage <= 10:
+                overrated_formats.append({'backgroundColor': {'red': 0.7, 'green': 1.0, 'blue': 0.7}})
+            elif percentage <= 25:
+                overrated_formats.append({'backgroundColor': {'red': 1.0, 'green': 1.0, 'blue': 0.7}})
+            else:
+                overrated_formats.append({'backgroundColor': {'red': 1.0, 'green': 0.7, 'blue': 0.7}})
+        else:
+            overrated_row.append('N/A')
+            overrated_formats.append({})
+    
+    data_rows.append(overrated_row)
+    cell_formats.append(overrated_formats)
+
+    # Optional: Log sample performance summary
+    logger.info("Sample Essay Effectiveness Metrics added to Google Sheets (% underrated/overrated)")
+
     return data_rows, cell_formats
 
 
 def write_to_sheets(sheets_client: SheetsClient, spreadsheet_id: str,
                    worksheet_name: str, data_rows: List[List],
                    cell_formats: List[Dict]) -> bool:
-    """Write comparison results to Google Sheets."""
+    """Write comparison results to Google Sheets with optimized single batch update."""
     try:
         spreadsheet = sheets_client.client.open_by_key(spreadsheet_id)
         
@@ -405,77 +846,59 @@ def write_to_sheets(sheets_client: SheetsClient, spreadsheet_id: str,
         # Calculate dimensions for formatting
         total_columns = len(data_rows[0]) if data_rows else 0
         total_rows = len(data_rows)
+        sheet_id = worksheet.id
         
-        # Format headers
-        worksheet.format('A1:Z1', {
-            'textFormat': {'bold': True},
-            'backgroundColor': {'red': 0.9, 'green': 0.9, 'blue': 0.9}
-        })
-
-        # Set all columns and rows to compact size for overview (user can manually expand to read full text)
-        try:
-            sheet_id = worksheet.id
-            requests = [
-                # Essay text column (A) - slightly wider for readability
-                {
-                    "updateDimensionProperties": {
-                        "range": {
-                            "sheetId": sheet_id,
-                            "dimension": "COLUMNS",
-                            "startIndex": 0,   # Column A
-                            "endIndex": 1      # up to but not including column B
-                        },
-                        "properties": {"pixelSize": 80},  # Slightly wider for essay text
-                        "fields": "pixelSize"
-                    }
-                },
-                # Score/error columns (B-F) - extra thin for numbers
-                {
-                    "updateDimensionProperties": {
-                        "range": {
-                            "sheetId": sheet_id,
-                            "dimension": "COLUMNS",
-                            "startIndex": 1,   # Columns B-F 
-                            "endIndex": 6      # up to but not including column G
-                        },
-                        "properties": {"pixelSize": 40},  # Extra thin for score/error numbers
-                        "fields": "pixelSize"
-                    }
-                },
-                # Make all rows consistently compact height
-                {
-                    "updateDimensionProperties": {
-                        "range": {
-                            "sheetId": sheet_id,
-                            "dimension": "ROWS",
-                            "startIndex": 0,   # Start from row 1 (header)
-                            "endIndex": total_rows + 20 if total_rows > 0 else 200  # All rows with generous buffer
-                        },
-                        "properties": {"pixelSize": 21},  # Consistent compact row height
-                        "fields": "pixelSize"
-                    }
+        # Build ALL formatting requests in a single batch
+        all_requests = []
+        
+        # 1. Column and row dimensions
+        all_requests.extend([
+            # Essay text column (A) - slightly wider for readability
+            {
+                "updateDimensionProperties": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "COLUMNS",
+                        "startIndex": 0,   # Column A
+                        "endIndex": 1      # up to but not including column B
+                    },
+                    "properties": {"pixelSize": 80},  # Slightly wider for essay text
+                    "fields": "pixelSize"
                 }
-            ]
-            spreadsheet.batch_update({"requests": requests})
-            
-            # Set text wrapping to CLIP to prevent auto row height expansion  
-            sheet_range = f"A1:Z{total_rows + 20 if total_rows > 0 else 200}"
-            worksheet.format(sheet_range, {
-                "wrapStrategy": "CLIP"  # Prevent text wrapping that expands row height
-            })
-        except Exception:
-            pass
+            },
+            # Score/error columns (B-F) - extra thin for numbers
+            {
+                "updateDimensionProperties": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "COLUMNS",
+                        "startIndex": 1,   # Columns B-F 
+                        "endIndex": 6      # up to but not including column G
+                    },
+                    "properties": {"pixelSize": 40},  # Extra thin for score/error numbers
+                    "fields": "pixelSize"
+                }
+            },
+            # Make all rows consistently compact height
+            {
+                "updateDimensionProperties": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "ROWS",
+                        "startIndex": 0,   # Start from row 1 (header)
+                        "endIndex": total_rows + 20 if total_rows > 0 else 200  # All rows with generous buffer
+                    },
+                    "properties": {"pixelSize": 21},  # Consistent compact row height
+                    "fields": "pixelSize"
+                }
+            }
+        ])
         
-        # Apply conditional formatting to color comparison results in one batch
-        # Determine the range for sample comparison cells (from comparison start col to the column before QWK)
-        # New column layout: A:EssayId, B:Actual, C:Pred, D:Rounded, E:AbsErrPred, F:AbsErrRounded, then samples..., last column is QWK
-        comparison_start_col_index = 6 - 1  # Column G is index 6 (0-based). But we start comparisons at column 7 (G)? Actually after F -> G (index 6)
+        # 2. Comparison cell coloring (BETTER/WORSE/SAME/ERROR)
         comparison_start_col_index = 6  # 0-based index for column G
         sample_count = max(0, total_columns - (comparison_start_col_index + 1))  # exclude last QWK col
-
+        
         if sample_count > 0 and total_rows > 1:
-            sheet_id = worksheet.id
-            requests = []
             comparison_grid_range = {
                 "sheetId": sheet_id,
                 "startRowIndex": 1,  # Row 2 (0-indexed), skip header
@@ -483,9 +906,17 @@ def write_to_sheets(sheets_client: SheetsClient, spreadsheet_id: str,
                 "startColumnIndex": comparison_start_col_index,  # Column G (0-indexed)
                 "endColumnIndex": comparison_start_col_index + sample_count  # exclusive
             }
-
-            def add_rule(text_value: str, color: dict):
-                requests.append({
+            
+            # Add conditional format rules for comparison results
+            comparison_rules = [
+                ("BETTER", {"red": 0.7, "green": 1.0, "blue": 0.7}),  # green-ish
+                ("WORSE", {"red": 1.0, "green": 0.7, "blue": 0.7}),   # red-ish
+                ("SAME", {"red": 1.0, "green": 1.0, "blue": 0.7}),    # yellow-ish
+                ("ERROR", {"red": 0.9, "green": 0.9, "blue": 0.9})    # gray
+            ]
+            
+            for text_value, color in comparison_rules:
+                all_requests.append({
                     "addConditionalFormatRule": {
                         "rule": {
                             "ranges": [comparison_grid_range],
@@ -494,75 +925,79 @@ def write_to_sheets(sheets_client: SheetsClient, spreadsheet_id: str,
                                     "type": "TEXT_EQ",
                                     "values": [{"userEnteredValue": text_value}]
                                 },
-                                "format": {
-                                    "backgroundColor": color
-                                }
+                                "format": {"backgroundColor": color}
                             }
                         },
                         "index": 0
                     }
                 })
-
-            # Colors to match previous behavior
-            add_rule("BETTER", {"red": 0.7, "green": 1.0, "blue": 0.7})  # green-ish
-            add_rule("WORSE", {"red": 1.0, "green": 0.7, "blue": 0.7})   # red-ish
-            add_rule("SAME",  {"red": 1.0, "green": 1.0, "blue": 0.7})   # yellow-ish
-            add_rule("ERROR", {"red": 0.9, "green": 0.9, "blue": 0.9})   # gray
-
-            spreadsheet.batch_update({"requests": requests})
-
-        # Add gradient color scales for error columns (Abs Err (Pred) and Abs Err (Rounded))
-        # Columns E and F respectively (after accounting for sample row, start from row 3)
+        
+        # 3. Gradient for Abs Err (Rounded) column
+        all_requests.append({
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": [{
+                        "sheetId": sheet_id,
+                        "startRowIndex": 2,  # Skip header and sample row
+                        "endRowIndex": total_rows,
+                        "startColumnIndex": 5,  # Column F (Abs Err Rounded)
+                        "endColumnIndex": 6
+                    }],
+                    "gradientRule": {
+                        "minpoint": {"color": {"red": 0.5, "green": 1.0, "blue": 0.5}, "type": "NUMBER", "value": "0"},    # bright green at 0 error
+                        "midpoint": {"color": {"red": 1.0, "green": 1.0, "blue": 0.3}, "type": "NUMBER", "value": "1.5"}, # yellow at moderate error
+                        "maxpoint": {"color": {"red": 1.0, "green": 0.3, "blue": 0.3}, "type": "NUMBER", "value": "3"}     # bright red at high error
+                    }
+                },
+                "index": 0
+            }
+        })
+        
+        # 4. White background for columns A-E
+        all_requests.append({
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": [{
+                        "sheetId": sheet_id,
+                        "startRowIndex": 2,
+                        "endRowIndex": total_rows,
+                        "startColumnIndex": 0,  # Column A
+                        "endColumnIndex": 5     # up to but not including F
+                    }],
+                    "booleanRule": {
+                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": "=TRUE"}]},
+                        "format": {"backgroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}}
+                    }
+                },
+                "index": 0
+            }
+        })
+        
+        # Execute ALL formatting in a single batch request
         try:
-            sheet_id = worksheet.id
-            requests = []
-            # E column (Abs Err (Pred)) index 4 (0-based)
-            # F column (Abs Err (Rounded)) index 5 (0-based)
-            for col_index in [4, 5]:
-                requests.append({
-                    "addConditionalFormatRule": {
-                        "rule": {
-                            "ranges": [{
-                                "sheetId": sheet_id,
-                                "startRowIndex": 2,  # Skip header and sample row
-                                "endRowIndex": total_rows,
-                                "startColumnIndex": col_index,
-                                "endColumnIndex": col_index + 1
-                            }],
-                            "gradientRule": {
-                                "minpoint": {"color": {"red": 0.7, "green": 1.0, "blue": 0.7}, "type": "MIN"},  # green at min error
-                                "maxpoint": {"color": {"red": 1.0, "green": 0.7, "blue": 0.7}, "type": "MAX"}   # red at max error
-                            }
-                        },
-                        "index": 0
-                    }
-                })
-            # Also add gradient for Actual vs Predicted Score columns (B and C)
-            for col_index in [1, 2]:  # Actual Score, Predicted Score
-                requests.append({
-                    "addConditionalFormatRule": {
-                        "rule": {
-                            "ranges": [{
-                                "sheetId": sheet_id,
-                                "startRowIndex": 2,  # Skip header and sample row
-                                "endRowIndex": total_rows,
-                                "startColumnIndex": col_index,
-                                "endColumnIndex": col_index + 1
-                            }],
-                            "gradientRule": {
-                                "minpoint": {"color": {"red": 1.0, "green": 0.8, "blue": 0.8}, "type": "NUMBER", "value": "1"},
-                                "midpoint": {"color": {"red": 1.0, "green": 1.0, "blue": 0.7}, "type": "NUMBER", "value": "3.5"},
-                                "maxpoint": {"color": {"red": 0.8, "green": 1.0, "blue": 0.8}, "type": "NUMBER", "value": "6"}
-                            }
-                        },
-                        "index": 0
-                    }
-                })
-            if requests:
-                spreadsheet.batch_update({"requests": requests})
+            if all_requests:
+                spreadsheet.batch_update({"requests": all_requests})
         except Exception as e:
-            logger.warning(f"Could not apply gradient formatting: {e}")
-            pass
+            logger.warning(f"Batch formatting failed: {e}")
+            # Continue anyway - data is still written
+        
+        # Apply remaining formats that can't be batched
+        try:
+            # Format headers
+            worksheet.format('A1:Z1', {
+                'textFormat': {'bold': True},
+                'backgroundColor': {'red': 0.9, 'green': 0.9, 'blue': 0.9}
+            })
+            
+            # Set text wrapping to CLIP
+            sheet_range = f"A1:Z{total_rows + 20 if total_rows > 0 else 200}"
+            worksheet.format(sheet_range, {"wrapStrategy": "CLIP"})
+            
+        except Exception as e:
+            logger.warning(f"Secondary formatting failed: {e}")
+            # Continue anyway
+        
+        # Skip the expensive per-cell purple highlighting - star markers are sufficient
         
         logger.info(f"Successfully wrote results to worksheet: {worksheet_name}")
         return True
@@ -600,8 +1035,11 @@ def grade_single_essay(grader, essay_data, rubric):
         test_essay, sample_essays, rubric
     )
     
-    # Calculate final score
-    predicted_score = grader.calculate_score_from_comparisons(comparisons)
+    # Calculate scores using all methods
+    all_scores = grader.calculate_all_scores(comparisons)
+    
+    # Keep the original as the main predicted_score for backward compatibility
+    predicted_score = all_scores['original']
     
     result = {
         'essay_id': essay_id,
@@ -609,10 +1047,12 @@ def grade_single_essay(grader, essay_data, rubric):
         'predicted_score': predicted_score,
         'comparisons': comparisons,
         'essay_text': test_essay,  # Store full essay text
-        'cluster_name': cluster_name
+        'cluster_name': cluster_name,
+        'all_scores': all_scores  # Store all method scores
     }
     
     logger.info(f"Essay {essay_id}: Predicted={predicted_score:.2f}, Actual={actual_score}")
+    logger.info(f"  All scores: {', '.join([f'{k}={v:.2f}' for k, v in all_scores.items()])}")
     return result
 
 
@@ -698,28 +1138,51 @@ def process_all_clusters_parallel(grader, summary_df, rubric, limit, max_paralle
     for result in all_results:
         results_by_cluster[result['cluster_name']].append(result)
     
+    # Track overall best method across all clusters
+    all_method_qwks = defaultdict(list)
+    
     # Process each cluster's results and write to sheets
     for cluster_name in results_by_cluster:
         cluster_results = results_by_cluster[cluster_name]
         predicted_scores = [r['predicted_score'] for r in cluster_results]
         actual_scores = [r['actual_score'] for r in cluster_results]
         
-        # Calculate QWK for this cluster
+        # Calculate QWK for this cluster (original method)
         qwk = calculate_qwk(actual_scores, predicted_scores)
+        
+        # Calculate QWK for all methods if available
+        method_qwks = {}
+        if cluster_results and 'all_scores' in cluster_results[0]:
+            scoring_methods = list(cluster_results[0]['all_scores'].keys())
+            for method in scoring_methods:
+                method_predictions = [r['all_scores'][method] for r in cluster_results if 'all_scores' in r]
+                if method_predictions:
+                    method_qwk = calculate_qwk(actual_scores[:len(method_predictions)], method_predictions)
+                    method_qwks[method] = method_qwk
+                    all_method_qwks[method].append(method_qwk)
         
         logger.info(f"\nResults for {cluster_name}:")
         logger.info(f"  Essays graded: {len(cluster_results)}")
-        logger.info(f"  QWK: {qwk:.4f}")
+        logger.info(f"  Original QWK: {qwk:.4f}")
+        
+        # Print QWK for each method
+        if method_qwks:
+            logger.info("  QWK by method:")
+            best_method = max(method_qwks, key=method_qwks.get)
+            for method, method_qwk in sorted(method_qwks.items(), key=lambda x: -x[1]):
+                star = " ⭐" if method == best_method else ""
+                logger.info(f"    {method}: {method_qwk:.4f}{star}")
+        
+        # Calculate and show sample essay performance metrics (always, not just for sheets)
+        sample_essays_df = cluster_samples[cluster_name]
+        data_rows, cell_formats = format_sheets_data(
+            cluster_results, sample_essays_df, qwk, cluster_name
+        )
         
         # Write to Google Sheets if enabled
         if sheets_client and spreadsheet_id:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             worksheet_name = f"nahuel-{cluster_name}-{timestamp}"
-            
-            sample_essays_df = cluster_samples[cluster_name]
-            data_rows, cell_formats = format_sheets_data(
-                cluster_results, sample_essays_df, qwk, cluster_name
-            )
             
             success = write_to_sheets(
                 sheets_client, spreadsheet_id,
@@ -733,9 +1196,16 @@ def process_all_clusters_parallel(grader, summary_df, rubric, limit, max_paralle
         
         # Print sample results
         print(f"\nSample predictions for {cluster_name}:")
-        for i, result in enumerate(cluster_results[:5]):
-            print(f"  Essay {result['essay_id']}: Actual={result['actual_score']}, "
-                  f"Predicted={result['predicted_score']:.2f}")
+        for i, result in enumerate(cluster_results[:3]):  # Reduced to 3 for brevity
+            print(f"  Essay {result['essay_id']}: Actual={result['actual_score']}")
+            
+            if 'all_scores' in result:
+                # Show all method predictions
+                print(f"    Predictions:")
+                for method, score in result['all_scores'].items():
+                    print(f"      {method}: {score:.2f} (rounded: {int(round(score))})")
+            else:
+                print(f"    Predicted={result['predicted_score']:.2f}")
             
             # Count comparison types
             same_count = sum(1 for c in result['comparisons'] if c['comparison'] == 'SAME')
@@ -743,30 +1213,22 @@ def process_all_clusters_parallel(grader, summary_df, rubric, limit, max_paralle
             worse_count = sum(1 for c in result['comparisons'] if c['comparison'] == 'B_BETTER')
             error_count = sum(1 for c in result['comparisons'] if c['comparison'] == 'ERROR')
             
-            # Count confidence levels
-            high_conf = sum(1 for c in result['comparisons'] if c.get('confidence') == 'HIGH')
-            med_conf = sum(1 for c in result['comparisons'] if c.get('confidence') == 'MEDIUM')
-            low_conf = sum(1 for c in result['comparisons'] if c.get('confidence') == 'LOW')
-            
-            # Analyze score bands
-            score_band_diffs = []
-            for c in result['comparisons']:
-                if c.get('test_score_band') and c.get('sample_score_band'):
-                    diff = abs(c['test_score_band'] - c['sample_score_band'])
-                    score_band_diffs.append(diff)
-            
-            avg_score_diff = sum(score_band_diffs) / len(score_band_diffs) if score_band_diffs else 0
-            close_scores = sum(1 for diff in score_band_diffs if diff <= 1)
-            
             print(f"    Comparisons: {better_count} better, {same_count} same, {worse_count} worse, {error_count} errors")
-            print(f"    Confidence: {high_conf} high, {med_conf} medium, {low_conf} low")
-            print(f"    Score bands: avg diff={avg_score_diff:.1f}, {close_scores}/{len(score_band_diffs)} within 1 point")
-            
-            # Show some examples of SAME comparisons if any
-            same_examples = [c for c in result['comparisons'] if c['comparison'] == 'SAME']
-            if same_examples:
-                same_strs = [f"vs {c['sample_id']}(score:{c['sample_score']})" for c in same_examples[:3]]
-                print(f"    SAME examples: {same_strs}")
+    
+    # Print overall summary
+    if all_method_qwks:
+        print("\n" + "="*80)
+        print("OVERALL SUMMARY - Average QWK across all clusters:")
+        print("="*80)
+        avg_qwks = {}
+        for method, qwks in all_method_qwks.items():
+            avg_qwks[method] = np.mean(qwks)
+        
+        best_overall_method = max(avg_qwks, key=avg_qwks.get)
+        for method, avg_qwk in sorted(avg_qwks.items(), key=lambda x: -x[1]):
+            star = " ⭐ BEST" if method == best_overall_method else ""
+            print(f"  {method}: {avg_qwk:.4f}{star}")
+        print("="*80)
     
     return results_by_cluster
 
