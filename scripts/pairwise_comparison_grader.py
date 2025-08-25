@@ -290,7 +290,7 @@ Respond ONLY with the JSON object, no additional text."""
                 'actual_score': actual_score,
                 'predicted_score': predicted_score,
                 'comparisons': comparisons,
-                'essay_text': test_essay[:500] + '...' if len(test_essay) > 500 else test_essay
+                'essay_text': test_essay  # Store full essay text
             })
             
             predicted_scores.append(predicted_score)
@@ -309,24 +309,37 @@ def format_sheets_data(results: List[Dict], sample_essays_df: pd.DataFrame,
     sample_essays_df = sample_essays_df.sort_values('score')
     sample_ids = sample_essays_df['essay_id'].tolist()
     sample_scores = sample_essays_df['score'].tolist()
+    sample_texts = sample_essays_df['full_text'].tolist()
     
     # Create headers
-    headers = ['Essay ID', 'Actual Score', 'Predicted Score']
+    headers = ['Essay Text', 'Actual Score', 'Predicted Score', 'Rounded Score', 'Abs Err (Pred)', 'Abs Err (Rounded)']
     for sample_id, sample_score in zip(sample_ids, sample_scores):
-        headers.append(f"Sample {sample_id} (Score: {sample_score})")
+        score_display = int(sample_score) if isinstance(sample_score, (int, float)) else sample_score
+        headers.append(f"{score_display}pt")
     headers.append('QWK')
     
     # Prepare data rows
     data_rows = [headers]
     
+    # Add row with sample essay texts
+    sample_row = ['SAMPLE ESSAYS', '-', '-', '-', '-', '-']
+    for sample_text in sample_texts:
+        sample_row.append(sample_text)
+    sample_row.append('')  # Empty for QWK column
+    data_rows.append(sample_row)
+    
     # Cell formats for coloring
     cell_formats = []
+    cell_formats.append([])  # Empty format for sample row
     
     for result in results:
         row = [
-            result['essay_id'],
+            result.get('essay_text', result['essay_id']),  # Use full text if available
             result['actual_score'],
-            f"{result['predicted_score']:.2f}"
+            f"{result['predicted_score']:.2f}",
+            int(round(result['predicted_score'])),
+            round(abs(float(result['predicted_score']) - float(result['actual_score'])), 2),
+            abs(int(round(result['predicted_score'])) - int(result['actual_score']))
         ]
         
         # Add comparison results for each sample
@@ -356,7 +369,7 @@ def format_sheets_data(results: List[Dict], sample_essays_df: pd.DataFrame,
                 row.append('N/A')
                 row_formats.append({})
         
-        # Add QWK only in first data row
+        # Add QWK (rounded) only in first data row
         if len(data_rows) == 1:
             row.append(f"{qwk:.4f}")
         else:
@@ -394,12 +407,49 @@ def write_to_sheets(sheets_client: SheetsClient, spreadsheet_id: str,
             'textFormat': {'bold': True},
             'backgroundColor': {'red': 0.9, 'green': 0.9, 'blue': 0.9}
         })
+
+        # Set column widths - Essay text column wide, others narrow
+        try:
+            sheet_id = worksheet.id
+            spreadsheet.batch_update({
+                "requests": [
+                    {
+                        "updateDimensionProperties": {
+                            "range": {
+                                "sheetId": sheet_id,
+                                "dimension": "COLUMNS",
+                                "startIndex": 0,   # Column A (Essay Text)
+                                "endIndex": 1
+                            },
+                            "properties": {"pixelSize": 400},  # Wide for essay text
+                            "fields": "pixelSize"
+                        }
+                    },
+                    {
+                        "updateDimensionProperties": {
+                            "range": {
+                                "sheetId": sheet_id,
+                                "dimension": "COLUMNS",
+                                "startIndex": 1,   # Columns B-F (scores and errors)
+                                "endIndex": 6
+                            },
+                            "properties": {"pixelSize": 60},  # Narrow for numbers
+                            "fields": "pixelSize"
+                        }
+                    }
+                ]
+            })
+        except Exception:
+            pass
         
         # Apply conditional formatting to color comparison results in one batch
-        # Determine the range for sample comparison cells (from column D to the column before QWK)
+        # Determine the range for sample comparison cells (from comparison start col to the column before QWK)
         total_columns = len(data_rows[0]) if data_rows else 0
         total_rows = len(data_rows)
-        sample_count = max(0, total_columns - 4)  # exclude 3 non-sample columns and the last QWK column
+        # New column layout: A:EssayId, B:Actual, C:Pred, D:Rounded, E:AbsErrPred, F:AbsErrRounded, then samples..., last column is QWK
+        comparison_start_col_index = 6 - 1  # Column G is index 6 (0-based). But we start comparisons at column 7 (G)? Actually after F -> G (index 6)
+        comparison_start_col_index = 6  # 0-based index for column G
+        sample_count = max(0, total_columns - (comparison_start_col_index + 1))  # exclude last QWK col
 
         if sample_count > 0 and total_rows > 1:
             sheet_id = worksheet.id
@@ -408,8 +458,8 @@ def write_to_sheets(sheets_client: SheetsClient, spreadsheet_id: str,
                 "sheetId": sheet_id,
                 "startRowIndex": 1,  # Row 2 (0-indexed), skip header
                 "endRowIndex": total_rows,  # exclusive
-                "startColumnIndex": 3,  # Column D (0-indexed)
-                "endColumnIndex": 3 + sample_count  # exclusive
+                "startColumnIndex": comparison_start_col_index,  # Column G (0-indexed)
+                "endColumnIndex": comparison_start_col_index + sample_count  # exclusive
             }
 
             def add_rule(text_value: str, color: dict):
@@ -438,6 +488,59 @@ def write_to_sheets(sheets_client: SheetsClient, spreadsheet_id: str,
             add_rule("ERROR", {"red": 0.9, "green": 0.9, "blue": 0.9})   # gray
 
             spreadsheet.batch_update({"requests": requests})
+
+        # Add gradient color scales for error columns (Abs Err (Pred) and Abs Err (Rounded))
+        # Columns E and F respectively (after accounting for sample row, start from row 3)
+        try:
+            sheet_id = worksheet.id
+            requests = []
+            # E column (Abs Err (Pred)) index 4 (0-based)
+            # F column (Abs Err (Rounded)) index 5 (0-based)
+            for col_index in [4, 5]:
+                requests.append({
+                    "addConditionalFormatRule": {
+                        "rule": {
+                            "ranges": [{
+                                "sheetId": sheet_id,
+                                "startRowIndex": 2,  # Skip header and sample row
+                                "endRowIndex": total_rows,
+                                "startColumnIndex": col_index,
+                                "endColumnIndex": col_index + 1
+                            }],
+                            "gradientRule": {
+                                "minpoint": {"color": {"red": 0.7, "green": 1.0, "blue": 0.7}, "type": "MIN"},  # green at min error
+                                "maxpoint": {"color": {"red": 1.0, "green": 0.7, "blue": 0.7}, "type": "MAX"}   # red at max error
+                            }
+                        },
+                        "index": 0
+                    }
+                })
+            # Also add gradient for Actual vs Predicted Score columns (B and C)
+            for col_index in [1, 2]:  # Actual Score, Predicted Score
+                requests.append({
+                    "addConditionalFormatRule": {
+                        "rule": {
+                            "ranges": [{
+                                "sheetId": sheet_id,
+                                "startRowIndex": 2,  # Skip header and sample row
+                                "endRowIndex": total_rows,
+                                "startColumnIndex": col_index,
+                                "endColumnIndex": col_index + 1
+                            }],
+                            "gradientRule": {
+                                "minpoint": {"color": {"red": 1.0, "green": 0.8, "blue": 0.8}, "type": "NUMBER", "value": "1"},
+                                "midpoint": {"color": {"red": 1.0, "green": 1.0, "blue": 0.7}, "type": "NUMBER", "value": "3.5"},
+                                "maxpoint": {"color": {"red": 0.8, "green": 1.0, "blue": 0.8}, "type": "NUMBER", "value": "6"}
+                            }
+                        },
+                        "index": 0
+                    }
+                })
+            if requests:
+                spreadsheet.batch_update({"requests": requests})
+        except Exception as e:
+            logger.warning(f"Could not apply gradient formatting: {e}")
+            pass
         
         logger.info(f"Successfully wrote results to worksheet: {worksheet_name}")
         return True
@@ -448,11 +551,11 @@ def write_to_sheets(sheets_client: SheetsClient, spreadsheet_id: str,
 
 
 def calculate_qwk(actual_scores: List[float], predicted_scores: List[float]) -> float:
-    """Calculate Quadratic Weighted Kappa."""
+    """Calculate Quadratic Weighted Kappa using rounded predictions."""
     try:
         # Convert to integers for QWK calculation
-        actual = [round(s) for s in actual_scores]
-        predicted = [round(s) for s in predicted_scores]
+        actual = [int(round(s)) for s in actual_scores]
+        predicted = [int(round(s)) for s in predicted_scores]
         
         return cohen_kappa_score(actual, predicted, weights='quadratic')
     except Exception as e:
@@ -483,7 +586,7 @@ def grade_single_essay(grader, essay_data, rubric):
         'actual_score': actual_score,
         'predicted_score': predicted_score,
         'comparisons': comparisons,
-        'essay_text': test_essay[:500] + '...' if len(test_essay) > 500 else test_essay,
+        'essay_text': test_essay,  # Store full essay text
         'cluster_name': cluster_name
     }
     
