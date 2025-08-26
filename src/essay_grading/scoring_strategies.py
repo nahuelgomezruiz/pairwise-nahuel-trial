@@ -28,37 +28,33 @@ class OriginalScoringStrategy(ScoringStrategy):
     """Original scoring strategy using weighted average."""
     
     def calculate_score(self, comparisons: List[Dict]) -> float:
-        """Calculate score using the original weighted average method."""
+        """Calculate score using the original average method."""
         if not comparisons:
             return 3.0  # Default middle score
             
-        total_weighted_score = 0
-        total_confidence = 0
+        scores = []
         
         for comp in comparisons:
             comparison = comp['comparison']
             sample_score = comp['sample_score']
             
             winner = comparison.get('winner', 'tie')
-            confidence = comparison.get('confidence', 0.5)
-            score_a = comparison.get('score_a', 3.0)  # Test essay score
-            score_b = comparison.get('score_b', 3.0)  # Sample essay score
             
             if winner == 'A':  # Test essay wins
-                estimated_score = max(score_a, sample_score)
-            elif winner == 'B':  # Sample essay wins
-                estimated_score = min(score_a, sample_score)
+                # If test essay is better, estimate it's above the sample score
+                estimated_score = min(sample_score + 1, 6)  # Cap at 6
+            elif winner == 'B':  # Sample essay wins  
+                # If sample is better, estimate test is below the sample score
+                estimated_score = max(sample_score - 1, 1)  # Floor at 1
             else:  # Tie
-                estimated_score = (score_a + sample_score) / 2
+                estimated_score = sample_score
             
-            weighted_score = estimated_score * confidence
-            total_weighted_score += weighted_score
-            total_confidence += confidence
+            scores.append(estimated_score)
         
-        if total_confidence == 0:
+        if not scores:
             return 3.0
             
-        return total_weighted_score / total_confidence
+        return np.mean(scores)
     
     def get_name(self) -> str:
         return "original"
@@ -89,13 +85,11 @@ class OptimizedScoringStrategy(ScoringStrategy):
         # Extract comparison data
         sample_scores = []
         winners = []
-        confidences = []
         
         for comp in comparisons:
             sample_scores.append(comp['sample_score'])
             comparison = comp['comparison']
             winners.append(comparison.get('winner', 'tie'))
-            confidences.append(comparison.get('confidence', 0.5))
         
         # Define optimization variables: [test_score, errors...]
         n_vars = 1 + n_samples
@@ -103,13 +97,13 @@ class OptimizedScoringStrategy(ScoringStrategy):
         def objective(x):
             test_score = x[0]
             errors = x[1:n_samples+1]
-            # Minimize errors weighted by confidence
-            return sum(conf * err**2 for conf, err in zip(confidences, errors))
+            # Minimize total squared errors
+            return sum(err**2 for err in errors)
         
         # Constraints
         constraints = []
         
-        for i, (winner, sample_score, conf) in enumerate(zip(winners, sample_scores, confidences)):
+        for i, (winner, sample_score) in enumerate(zip(winners, sample_scores)):
             error_idx = i + 1
             
             if winner == 'A':  # Test essay should be better
@@ -148,48 +142,54 @@ class OptimizedScoringStrategy(ScoringStrategy):
     def _fallback_calculation(self, comparisons: List[Dict]) -> float:
         """Fallback calculation when optimization fails."""
         scores = []
-        weights = []
         
         for comp in comparisons:
             comparison = comp['comparison']
-            confidence = comparison.get('confidence', 0.5)
-            score_a = comparison.get('score_a', 3.0)
+            sample_score = comp['sample_score']
+            winner = comparison.get('winner', 'tie')
             
-            scores.append(score_a)
-            weights.append(confidence)
+            if winner == 'A':
+                scores.append(min(sample_score + 1, 6))
+            elif winner == 'B':
+                scores.append(max(sample_score - 1, 1))
+            else:
+                scores.append(sample_score)
         
-        if not weights or sum(weights) == 0:
+        if not scores:
             return 3.0
             
-        return np.average(scores, weights=weights)
+        return np.mean(scores)
     
     def get_name(self) -> str:
         return "optimized"
 
 
 class WeightedAverageScoringStrategy(ScoringStrategy):
-    """Simple weighted average scoring strategy."""
+    """Simple average scoring strategy based on comparison outcomes."""
     
     def calculate_score(self, comparisons: List[Dict]) -> float:
-        """Calculate score using simple weighted average of AI-predicted scores."""
+        """Calculate score using simple average based on win/loss outcomes."""
         if not comparisons:
             return 3.0
             
         scores = []
-        weights = []
         
         for comp in comparisons:
             comparison = comp['comparison']
-            confidence = comparison.get('confidence', 0.5)
-            score_a = comparison.get('score_a', 3.0)  # Test essay score from AI
+            sample_score = comp['sample_score']
+            winner = comparison.get('winner', 'tie')
             
-            scores.append(score_a)
-            weights.append(confidence)
+            if winner == 'A':
+                scores.append(min(sample_score + 1, 6))
+            elif winner == 'B':
+                scores.append(max(sample_score - 1, 1))
+            else:
+                scores.append(sample_score)
         
-        if not weights or sum(weights) == 0:
+        if not scores:
             return 3.0
             
-        return np.average(scores, weights=weights)
+        return np.mean(scores)
     
     def get_name(self) -> str:
         return "weighted_average"
@@ -199,15 +199,22 @@ class MedianScoringStrategy(ScoringStrategy):
     """Median-based scoring strategy for robustness."""
     
     def calculate_score(self, comparisons: List[Dict]) -> float:
-        """Calculate score using median of AI-predicted scores."""
+        """Calculate score using median of estimated scores based on outcomes."""
         if not comparisons:
             return 3.0
             
         scores = []
         for comp in comparisons:
             comparison = comp['comparison']
-            score_a = comparison.get('score_a', 3.0)
-            scores.append(score_a)
+            sample_score = comp['sample_score']
+            winner = comparison.get('winner', 'tie')
+            
+            if winner == 'A':
+                scores.append(min(sample_score + 1, 6))
+            elif winner == 'B':
+                scores.append(max(sample_score - 1, 1))
+            else:
+                scores.append(sample_score)
         
         return np.median(scores) if scores else 3.0
     
@@ -233,7 +240,7 @@ class EloScoringStrategy(ScoringStrategy):
                 # Modular format
                 comparison = comp['comparison']
                 winner = comparison.get('winner', 'tie')
-                sample_score = comparison.get('score_b', comp.get('sample_score', 3.0))
+                sample_score = comp.get('sample_score', 3.0)
             else:
                 # Monolithic format compatibility
                 comparison_result = comp.get('comparison', '')
@@ -286,7 +293,7 @@ class BradleyTerryScoringStrategy(ScoringStrategy):
                 # Modular format
                 comparison = comp['comparison']
                 winner = comparison.get('winner', 'tie')
-                sample_score = comparison.get('score_b', comp.get('sample_score', 3.0))
+                sample_score = comp.get('sample_score', 3.0)
             else:
                 # Monolithic format compatibility
                 comparison_result = comp.get('comparison', '')
@@ -353,7 +360,7 @@ class PercentileScoringStrategy(ScoringStrategy):
                 # Modular format
                 comparison = comp['comparison']
                 winner = comparison.get('winner', 'tie')
-                sample_score = comparison.get('score_b', comp.get('sample_score', 3.0))
+                sample_score = comp.get('sample_score', 3.0)
             else:
                 # Monolithic format compatibility
                 comparison_result = comp.get('comparison', '')
@@ -422,7 +429,7 @@ class BayesianScoringStrategy(ScoringStrategy):
                 # Modular format
                 comparison = comp['comparison']
                 winner = comparison.get('winner', 'tie')
-                sample_score = comparison.get('score_b', comp.get('sample_score', 3.0))
+                sample_score = comp.get('sample_score', 3.0)
             else:
                 # Monolithic format compatibility
                 comparison_result = comp.get('comparison', '')
@@ -463,3 +470,57 @@ class BayesianScoringStrategy(ScoringStrategy):
     
     def get_name(self) -> str:
         return "bayesian"
+
+
+class OGOriginalScoringStrategy(ScoringStrategy):
+    """OG Original scoring strategy: average of max(beat) and min(beaten_by).
+    
+    Special cases:
+    - If test essay beats all samples: returns 6.0 (maximum score)
+    - If test essay loses to all samples: returns 1.0 (minimum score)
+    - Otherwise: returns (max_of_beaten + min_of_beat_by) / 2
+    """
+    
+    def calculate_score(self, comparisons: List[Dict]) -> float:
+        """Calculate score based on comparison outcomes.
+        
+        Returns:
+        - 6.0 if test essay beats all samples
+        - 1.0 if test essay loses to all samples
+        - Average of max(beaten) and min(beaten_by) otherwise
+        """
+        if not comparisons:
+            return 3.0  # Default middle score
+            
+        scores_test_beat = []  # Scores of samples that test essay beat
+        scores_beat_test = []  # Scores of samples that beat test essay
+        
+        for comp in comparisons:
+            comparison = comp['comparison']
+            sample_score = comp['sample_score']
+            
+            winner = comparison.get('winner', 'A')  # Default to A if missing
+            
+            if winner == 'A':  # Test essay wins
+                scores_test_beat.append(sample_score)
+            else:  # winner == 'B' - Sample essay wins  
+                scores_beat_test.append(sample_score)
+        
+        # Handle edge cases
+        if not scores_test_beat and not scores_beat_test:
+            # No comparisons were conclusive
+            return 3.0
+        elif not scores_beat_test:
+            # Test essay beat everything - assign maximum score
+            return 6.0
+        elif not scores_test_beat:
+            # Test essay lost to everything - assign minimum score
+            return 1.0
+        else:
+            # Normal case: average of max(beat) and min(beaten_by)
+            max_beat = max(scores_test_beat)
+            min_beaten_by = min(scores_beat_test)
+            return (max_beat + min_beaten_by) / 2
+    
+    def get_name(self) -> str:
+        return "og_original"

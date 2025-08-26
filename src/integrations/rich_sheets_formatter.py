@@ -81,6 +81,13 @@ class RichSheetsFormatter:
                 'Abs Diff (Orig Up Rounded)'
             ])
         
+        # Add special columns for og_original scoring method
+        if 'og_original' in scoring_methods:
+            headers.extend([
+                'OG Rounded',
+                'Abs Diff (OG Rounded)'
+            ])
+        
         # Add comparison columns for each sample
         for sample_id, sample_score in zip(sample_ids, sample_scores):
             score_display = int(sample_score) if isinstance(sample_score, (int, float)) else sample_score
@@ -95,6 +102,8 @@ class RichSheetsFormatter:
             sample_row.append('-')
         if 'original' in scoring_methods:
             sample_row.extend(['-', '-', '-'])  # Skip special original columns
+        if 'og_original' in scoring_methods:
+            sample_row.extend(['-', '-'])  # Skip special og_original columns
         for sample_text in sample_texts:
             sample_row.append(sample_text)
         data_rows.append(sample_row)
@@ -113,6 +122,8 @@ class RichSheetsFormatter:
             # Add scores for each method
             original_score = None
             original_rounded = None
+            og_original_score = None
+            og_original_rounded = None
             for method in scoring_methods:
                 if 'all_scores' in result and method in result['all_scores']:
                     score = result['all_scores'][method]
@@ -122,6 +133,9 @@ class RichSheetsFormatter:
                     if method == 'original':
                         original_score = score
                         original_rounded = rounded_score
+                    elif method == 'og_original':
+                        og_original_score = score
+                        og_original_rounded = rounded_score
                 else:
                     row.append('-')
                     row.append('-')
@@ -144,7 +158,20 @@ class RichSheetsFormatter:
                 row.append(abs_diff_rounded)
                 row.append(abs_diff_up_rounded)
             elif 'original' in scoring_methods:
-                row.extend(['-', '-', '-'])  # No original score available
+                row.extend(['-', '-', '-'])
+            
+            # Add special columns for og_original scoring method
+            if 'og_original' in scoring_methods and og_original_score is not None:
+                # OG Original rounded score
+                row.append(og_original_rounded)
+                
+                # Calculate absolute difference
+                actual_score_int = int(result['actual_score'])
+                abs_diff_og = abs(og_original_rounded - actual_score_int)
+                
+                row.append(abs_diff_og)
+            elif 'og_original' in scoring_methods:
+                row.extend(['-', '-'])  # No original score available
             
             # Add comparison results for each sample
             comparisons_dict = {comp['sample_id']: comp for comp in result['comparisons']}
@@ -152,7 +179,8 @@ class RichSheetsFormatter:
             # Get actual score to mark target columns
             actual_score = result['actual_score']
             
-            row_formats = []
+            # Don't generate individual cell formats for comparison columns since we'll use conditional formatting
+            # Just add the text content and let conditional formatting handle the colors
             for idx, (sample_id, sample_score) in enumerate(zip(sample_ids, sample_scores)):
                 # Check if this column's score matches the actual score
                 is_target_score = (int(sample_score) == int(actual_score))
@@ -178,32 +206,28 @@ class RichSheetsFormatter:
                         comparison_result = comp.get('comparison', 'ERROR')
                     
                     if comparison_result == 'A_BETTER':
-                        # Test essay is better - green
+                        # Test essay is better - green (conditional formatting will handle color)
                         cell_text = '★BETTER★' if is_target_score else 'BETTER'
                         row.append(cell_text)
-                        row_formats.append({'backgroundColor': {'red': 0.7, 'green': 1.0, 'blue': 0.7}})
                     elif comparison_result == 'B_BETTER':
-                        # Sample is better - red
+                        # Sample is better - red (conditional formatting will handle color)
                         cell_text = '★WORSE★' if is_target_score else 'WORSE'
                         row.append(cell_text)
-                        row_formats.append({'backgroundColor': {'red': 1.0, 'green': 0.7, 'blue': 0.7}})
                     elif comparison_result == 'SAME':
-                        # Same quality - yellow
+                        # Same quality - yellow (conditional formatting will handle color)
                         cell_text = '★SAME★' if is_target_score else 'SAME'
                         row.append(cell_text)
-                        row_formats.append({'backgroundColor': {'red': 1.0, 'green': 1.0, 'blue': 0.7}})
                     else:
-                        # Error - gray
+                        # Error - gray (conditional formatting will handle color)
                         cell_text = '★ERROR★' if is_target_score else 'ERROR'
                         row.append(cell_text)
-                        row_formats.append({'backgroundColor': {'red': 0.9, 'green': 0.9, 'blue': 0.9}})
                 else:
                     cell_text = '★N/A★' if is_target_score else 'N/A'
                     row.append(cell_text)
-                    row_formats.append({})
             
             data_rows.append(row)
-            cell_formats.append(row_formats)
+            # No individual cell formats for comparison columns - conditional formatting will handle this
+            cell_formats.append([])
         
         # Add QWK summary rows for each method
         data_rows.append([])  # Empty row for separation
@@ -377,11 +401,13 @@ class RichSheetsFormatter:
         return data_rows, cell_formats
 
     @staticmethod
-    def _add_score_borders(worksheet, spreadsheet, data_rows, sheet_id):
-        """Highlight score columns that match each essay's actual score with purple background."""
+    def _get_score_border_requests(data_rows, sheet_id):
+        """Generate OPTIMIZED batch requests to highlight score columns that match each essay's actual score.
+        Returns list of requests instead of executing them, so they can be combined with other batch operations."""
+        batch_requests = []
         try:
             if len(data_rows) < 3:  # Need at least header, sample row, and one data row
-                return
+                return batch_requests
                 
             headers = data_rows[0]
             
@@ -399,13 +425,12 @@ class RichSheetsFormatter:
             
             if not score_columns:
                 logger.warning("No score columns found in headers")
-                return
-                
-            # Build batch format requests
-            format_requests = []
+                return batch_requests
+            
+            # OPTIMIZED: Group cells by score to format multiple ranges at once
+            cells_to_format = []  # List of (row_idx, col_idx) tuples
             
             # Process each data row (skip header at index 0 and sample row at index 1)
-            # Also stop before the QWK summary rows at the end
             for row_idx in range(2, len(data_rows)):
                 row = data_rows[row_idx]
                 if len(row) < 2:
@@ -423,32 +448,120 @@ class RichSheetsFormatter:
                         
                     # Get all columns for this score
                     target_columns = score_columns[actual_score]
-                    if not target_columns:
-                        continue
-                        
-                    # Apply purple/blue highlighting to target score cells
                     for col_idx in target_columns:
-                        # Convert column index to letter
-                        col_letter = chr(65 + col_idx) if col_idx < 26 else f"{chr(65 + col_idx // 26 - 1)}{chr(65 + col_idx % 26)}"
-                        cell_address = f"{col_letter}{row_idx + 1}"  # +1 because sheets are 1-indexed
-                        
-                        # Get current cell value to preserve it
-                        current_value = row[col_idx] if col_idx < len(row) else ''
-                        
-                        # Apply distinctive purple/blue background with bold text
-                        # This will override the existing color but make target scores stand out
-                        worksheet.format(cell_address, {
-                            'backgroundColor': {'red': 0.8, 'green': 0.7, 'blue': 1.0},  # Light purple
-                            'textFormat': {'bold': True, 'fontSize': 11}
-                        })
-                        time.sleep(0.1)  # Small delay to avoid rate limits
+                        cells_to_format.append((row_idx, col_idx))
                         
                 except (ValueError, IndexError) as e:
                     logger.warning(f"Error processing row {row_idx}: {e}")
                     continue
-                    
+            
+            # OPTIMIZED: Create fewer requests by grouping cells
+            # Group consecutive cells in the same column to create column ranges
+            if cells_to_format:
+                # Sort by column then row for better grouping
+                cells_to_format.sort(key=lambda x: (x[1], x[0]))
+                
+                # Group consecutive cells in the same column
+                current_col = None
+                start_row = None
+                end_row = None
+                
+                for row_idx, col_idx in cells_to_format:
+                    if current_col != col_idx:
+                        # New column, flush previous range if exists
+                        if current_col is not None and start_row is not None:
+                            batch_requests.append({
+                                "repeatCell": {
+                                    "range": {
+                                        "sheetId": sheet_id,
+                                        "startRowIndex": start_row,
+                                        "endRowIndex": end_row + 1,
+                                        "startColumnIndex": current_col,
+                                        "endColumnIndex": current_col + 1
+                                    },
+                                    "cell": {
+                                        "userEnteredFormat": {
+                                            "backgroundColor": {"red": 0.8, "green": 0.7, "blue": 1.0},  # Light purple
+                                            "textFormat": {"bold": True, "fontSize": 11}
+                                        }
+                                    },
+                                    "fields": "userEnteredFormat.backgroundColor,userEnteredFormat.textFormat"
+                                }
+                            })
+                        
+                        # Start new range
+                        current_col = col_idx
+                        start_row = row_idx
+                        end_row = row_idx
+                    else:
+                        # Same column, check if consecutive row
+                        if row_idx == end_row + 1:
+                            # Consecutive, extend range
+                            end_row = row_idx
+                        else:
+                            # Non-consecutive, flush current range and start new
+                            batch_requests.append({
+                                "repeatCell": {
+                                    "range": {
+                                        "sheetId": sheet_id,
+                                        "startRowIndex": start_row,
+                                        "endRowIndex": end_row + 1,
+                                        "startColumnIndex": current_col,
+                                        "endColumnIndex": current_col + 1
+                                    },
+                                    "cell": {
+                                        "userEnteredFormat": {
+                                            "backgroundColor": {"red": 0.8, "green": 0.7, "blue": 1.0},  # Light purple
+                                            "textFormat": {"bold": True, "fontSize": 11}
+                                        }
+                                    },
+                                    "fields": "userEnteredFormat.backgroundColor,userEnteredFormat.textFormat"
+                                }
+                            })
+                            start_row = row_idx
+                            end_row = row_idx
+                
+                # Flush last range
+                if current_col is not None and start_row is not None:
+                    batch_requests.append({
+                        "repeatCell": {
+                            "range": {
+                                "sheetId": sheet_id,
+                                "startRowIndex": start_row,
+                                "endRowIndex": end_row + 1,
+                                "startColumnIndex": current_col,
+                                "endColumnIndex": current_col + 1
+                            },
+                            "cell": {
+                                "userEnteredFormat": {
+                                    "backgroundColor": {"red": 0.8, "green": 0.7, "blue": 1.0},  # Light purple
+                                    "textFormat": {"bold": True, "fontSize": 11}
+                                }
+                            },
+                            "fields": "userEnteredFormat.backgroundColor,userEnteredFormat.textFormat"
+                        }
+                    })
+                
+                logger.info(f"Optimized {len(cells_to_format)} cells into {len(batch_requests)} batch requests for score highlighting")
+                
         except Exception as e:
-            logger.warning(f"Failed to add score highlighting: {e}")
+            logger.warning(f"Failed to generate score highlighting requests: {e}")
+            
+        return batch_requests
+    
+    @staticmethod
+    def _add_score_borders(worksheet, spreadsheet, data_rows, sheet_id):
+        """Legacy method - kept for backward compatibility. Executes score border highlighting immediately."""
+        batch_requests = RichSheetsFormatter._get_score_border_requests(data_rows, sheet_id)
+        
+        # Execute all formatting in a single batch request
+        if batch_requests:
+            try:
+                logger.info(f"Applying score highlighting to {len(batch_requests)} cells in single batch")
+                result = spreadsheet.batch_update({"requests": batch_requests})
+                logger.info(f"Score highlighting batch update succeeded")
+            except Exception as e:
+                logger.warning(f"Failed to apply batch score highlighting: {e}")
 
     @staticmethod
     def write_to_sheets(sheets_client, spreadsheet_id: str, worksheet_name: str,
@@ -481,6 +594,7 @@ class RichSheetsFormatter:
             # Count scoring methods from the headers
             scoring_methods_count = 0
             has_original_special_cols = False
+            has_og_original_special_cols = False
             
             # Check headers to count scoring methods and detect special columns
             if data_rows and len(data_rows) > 0:
@@ -490,12 +604,16 @@ class RichSheetsFormatter:
                         scoring_methods_count += 1
                     if header == 'Original Up Rounded':
                         has_original_special_cols = True
+                    if header == 'OG Rounded':
+                        has_og_original_special_cols = True
             
             # Calculate comparison start column index
             # 2 base columns (Essay Text, Actual Score) + 2 per scoring method
             comparison_start_col_index = 2 + (scoring_methods_count * 2)
             if has_original_special_cols:
                 comparison_start_col_index += 3  # Add 3 for special columns
+            if has_og_original_special_cols:
+                comparison_start_col_index += 2  # Add 2 for og_original special columns
             
             logger.info(f"Comparison columns start at index {comparison_start_col_index} (column {chr(65 + comparison_start_col_index)})")
             
@@ -545,57 +663,11 @@ class RichSheetsFormatter:
                 }
             ])
             
-            # 2. Direct cell coloring for comparison results (BETTER/WORSE/SAME/ERROR)
-            # Instead of using conditional formatting, directly color cells based on their values
+            # 2. Skip comparison column coloring as per user request
+            # Just log that we're not applying comparison colors
+            comparison_formats = []
             sample_count = max(0, total_columns - comparison_start_col_index)
-            
-            if sample_count > 0 and total_rows > 2:
-                # Process each data row (skip header at row 0 and sample row at row 1)
-                for row_idx in range(2, total_rows):
-                    if row_idx >= len(data_rows):
-                        break
-                    row = data_rows[row_idx]
-                    
-                    # Process each comparison column
-                    for col_offset in range(sample_count):
-                        col_idx = comparison_start_col_index + col_offset
-                        if col_idx >= len(row):
-                            continue
-                        
-                        cell_value = str(row[col_idx])
-                        
-                        # Determine color based on cell content
-                        bg_color = None
-                        if "BETTER" in cell_value:
-                            bg_color = {"red": 0.7, "green": 1.0, "blue": 0.7}  # Green
-                        elif "WORSE" in cell_value:
-                            bg_color = {"red": 1.0, "green": 0.7, "blue": 0.7}  # Red
-                        elif "SAME" in cell_value:
-                            bg_color = {"red": 1.0, "green": 1.0, "blue": 0.7}  # Yellow
-                        elif "ERROR" in cell_value:
-                            bg_color = {"red": 0.9, "green": 0.9, "blue": 0.9}  # Gray
-                        elif "N/A" in cell_value:
-                            bg_color = {"red": 0.95, "green": 0.95, "blue": 0.95}  # Light gray
-                        
-                        if bg_color:
-                            # Add a repeatCell request to color this specific cell
-                            all_requests.append({
-                                "repeatCell": {
-                                    "range": {
-                                        "sheetId": sheet_id,
-                                        "startRowIndex": row_idx,  # 0-indexed
-                                        "endRowIndex": row_idx + 1,
-                                        "startColumnIndex": col_idx,
-                                        "endColumnIndex": col_idx + 1
-                                    },
-                                    "cell": {
-                                        "userEnteredFormat": {
-                                            "backgroundColor": bg_color
-                                        }
-                                    },
-                                    "fields": "userEnteredFormat.backgroundColor"
-                                }
-                            })
+            logger.info(f"Comparison columns detected at index {comparison_start_col_index} with {sample_count} columns - coloring disabled")
             
             # 3. Gradient for Abs Diff columns (if present)
             if has_original_special_cols:
@@ -646,57 +718,50 @@ class RichSheetsFormatter:
                     }
                 })
             
-            # 4. White background for columns before comparisons (except gradient columns)
-            white_bg_end_col = comparison_start_col_index - 2 if has_original_special_cols else comparison_start_col_index
-            all_requests.append({
-                "addConditionalFormatRule": {
-                    "rule": {
-                        "ranges": [{
-                            "sheetId": sheet_id,
-                            "startRowIndex": 2,
-                            "endRowIndex": total_rows,
-                            "startColumnIndex": 0,  # Column A
-                            "endColumnIndex": white_bg_end_col  # up to but not including gradient columns
-                        }],
-                        "booleanRule": {
-                            "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": "=TRUE"}]},
-                            "format": {"backgroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}}
-                        }
-                    },
-                    "index": 0
-                }
-            })
+            # Add score border highlighting requests to the same batch
+            score_border_requests = RichSheetsFormatter._get_score_border_requests(data_rows, sheet_id)
+            if score_border_requests:
+                all_requests.extend(score_border_requests)
+                logger.info(f"Added {len(score_border_requests)} score border requests to batch")
             
-            # Execute ALL formatting in a single batch request
+            # OPTIMIZED: Execute ALL formatting in a SINGLE batch request
             try:
                 if all_requests:
-                    logger.info(f"Attempting batch update with {len(all_requests)} format requests")
+                    logger.info(f"Executing SINGLE OPTIMIZED batch update with {len(all_requests)} total format requests")
                     result = spreadsheet.batch_update({"requests": all_requests})
-                    logger.info(f"Batch update succeeded: {result}")
+                    logger.info(f"Single batch update succeeded - much faster than multiple calls!")
             except Exception as e:
                 logger.error(f"Batch formatting failed with error: {e}")
                 import traceback
                 logger.error(f"Full traceback: {traceback.format_exc()}")
                 # Continue anyway - data is still written
             
-            # Apply remaining formats that can't be batched
+            # Apply remaining formats that can't be batched (simple formatting operations)
             try:
-                # Format headers
-                worksheet.format('A1:Z1', {
+                # Format headers - dynamically calculate the range based on actual columns
+                def get_column_letter(col_num):
+                    """Convert column number (1-based) to Excel column letter(s)."""
+                    result = ""
+                    while col_num > 0:
+                        col_num -= 1  # Make it 0-based
+                        result = chr(65 + (col_num % 26)) + result
+                        col_num //= 26
+                    return result
+                
+                last_column_letter = get_column_letter(total_columns)
+                
+                header_range = f"A1:{last_column_letter}1"
+                logger.info(f"Formatting headers in range: {header_range} (total columns: {total_columns})")
+                worksheet.format(header_range, {
                     'textFormat': {'bold': True},
                     'backgroundColor': {'red': 0.9, 'green': 0.9, 'blue': 0.9}
                 })
                 
-                # Set text wrapping to CLIP
-                sheet_range = f"A1:Z{total_rows + 20 if total_rows > 0 else 200}"
-                worksheet.format(sheet_range, {"wrapStrategy": "CLIP"})
+                # Comparison column coloring is disabled per user request
                 
             except Exception as e:
                 logger.warning(f"Secondary formatting failed: {e}")
                 # Continue anyway
-            
-            # Add the purple highlighting for target scores
-            RichSheetsFormatter._add_score_borders(worksheet, spreadsheet, data_rows, sheet_id)
             
             logger.info(f"Successfully wrote results to worksheet: {worksheet_name}")
             return True

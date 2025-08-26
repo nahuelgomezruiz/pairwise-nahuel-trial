@@ -16,7 +16,8 @@ from .scoring_strategies import (
     EloScoringStrategy,
     BradleyTerryScoringStrategy,
     PercentileScoringStrategy,
-    BayesianScoringStrategy
+    BayesianScoringStrategy,
+    OGOriginalScoringStrategy
 )
 from .comparison_engine import ComparisonEngine
 
@@ -31,5 +32,6 @@ __all__ = [
     'EloScoringStrategy',
     'BradleyTerryScoringStrategy',
     'PercentileScoringStrategy',
-    'BayesianScoringStrategy'
+    'BayesianScoringStrategy',
+    'OGOriginalScoringStrategy'
 ]

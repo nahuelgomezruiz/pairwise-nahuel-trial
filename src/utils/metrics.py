@@ -27,6 +27,7 @@ def calculate_qwk(actual_scores: List[float], predicted_scores: List[float]) -> 
         qwk = cohen_kappa_score(
             actual_scores, 
             predicted_rounded, 
+            labels=[1,2,3,4,5,6],
             weights='quadratic'
         )
         return qwk
@@ -129,27 +130,21 @@ def calculate_score_reliability(results: List[Dict[str, Any]]) -> Dict[str, floa
         return {}
     
     try:
-        confidence_scores = []
         comparison_counts = []
         
         for result in results:
             comparisons = result.get('comparisons', [])
             if comparisons:
-                confidences = [c.get('comparison', {}).get('confidence', 0.5) 
-                              for c in comparisons]
-                avg_confidence = np.mean(confidences)
-                confidence_scores.append(avg_confidence)
                 comparison_counts.append(len(comparisons))
         
-        if not confidence_scores:
+        if not comparison_counts:
             return {}
         
         return {
-            'mean_confidence': np.mean(confidence_scores),
-            'std_confidence': np.std(confidence_scores),
-            'min_confidence': np.min(confidence_scores),
-            'max_confidence': np.max(confidence_scores),
             'mean_comparisons': np.mean(comparison_counts),
+            'std_comparisons': np.std(comparison_counts),
+            'min_comparisons': np.min(comparison_counts),
+            'max_comparisons': np.max(comparison_counts),
             'total_essays': len(results)
         }
         

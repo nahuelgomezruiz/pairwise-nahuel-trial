@@ -10,7 +10,8 @@ from .scoring_strategies import (
     ScoringStrategy, OriginalScoringStrategy, OptimizedScoringStrategy,
     WeightedAverageScoringStrategy, MedianScoringStrategy,
     EloScoringStrategy, BradleyTerryScoringStrategy,
-    PercentileScoringStrategy, BayesianScoringStrategy
+    PercentileScoringStrategy, BayesianScoringStrategy,
+    OGOriginalScoringStrategy
 )
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,8 @@ class PairwiseGrader:
             'elo': EloScoringStrategy(),
             'bradley_terry': BradleyTerryScoringStrategy(),
             'percentile': PercentileScoringStrategy(),
-            'bayesian': BayesianScoringStrategy()
+            'bayesian': BayesianScoringStrategy(),
+            'og_original': OGOriginalScoringStrategy()
         }
         self.default_strategy = 'original'
         

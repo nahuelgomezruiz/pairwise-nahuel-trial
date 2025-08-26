@@ -48,13 +48,12 @@ class ComparisonEngine:
         prompt_context = ""
         if cluster_name and cluster_name in CLUSTER_PROMPTS:
             prompt_context = f"""
-
-PROMPT CONTEXT:
-These essays were written in response to the following assignment: {CLUSTER_PROMPTS[cluster_name]}
-
-Evaluate how well each essay fulfills this specific assignment requirement."""
+{CLUSTER_PROMPTS[cluster_name]}
+"""
         
-        prompt = f"""Compare these two student essays and determine which is better. Consider how well each essay addresses the assignment requirements and demonstrates quality writing.{prompt_context}
+        prompt = f"""You are a school teacher. Compare these two student essays and determine which is better.  
+        
+{prompt_context}
 
 ESSAY A:
 {essay1}
@@ -68,17 +67,14 @@ RUBRIC:
 Return a JSON object with:
 {{
     "reasoning": "Brief explanation of which essay better fulfills the assignment and demonstrates higher quality",
-    "winner": "A" or "B" or "tie",
-    "confidence": 0.0-1.0,
-    "score_a": estimated score for essay A (1-6),
-    "score_b": estimated score for essay B (1-6)
+    "winner": "A" or "B"
 }}
 
-Think step by step about:
-1. How well each essay addresses the specific assignment requirements
-2. Quality of arguments and use of evidence 
-3. Writing clarity, structure, and organization
-4. Overall effectiveness in achieving the stated purpose"""
+Where:
+- "A" means Essay A is better than Essay B
+- "B" means Essay B is better than Essay A
+
+Respond ONLY with the JSON object, no additional text."""
         return prompt
     
     def _traced_create_comparison_prompt(self, essay1: str, essay2: str, rubric: str, cluster_name: str = None) -> str:
@@ -102,7 +98,7 @@ Think step by step about:
             result = json.loads(response)
             
             # Validate response structure
-            required_keys = ['reasoning', 'winner', 'confidence', 'score_a', 'score_b']
+            required_keys = ['reasoning', 'winner']
             if not all(key in result for key in required_keys):
                 logger.warning(f"Incomplete comparison result: {result}")
                 return self._create_fallback_result()
@@ -120,10 +116,7 @@ Think step by step about:
         """Create a fallback result when comparison fails."""
         return {
             'reasoning': 'Comparison failed',
-            'winner': 'tie',
-            'confidence': 0.5,
-            'score_a': 3.0,
-            'score_b': 3.0
+            'winner': 'tie'  # Kept for potential future use in calculations
         }
     
     def parallel_compare_with_samples(self, test_essay: str, sample_essays: List[Dict], 
