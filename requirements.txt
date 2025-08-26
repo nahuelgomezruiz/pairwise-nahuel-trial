@@ -8,6 +8,7 @@ scipy
 openai
 anthropic>=0.18.0
 google-generativeai>=0.3.0
+langsmith>=0.1.0
 
 # Google Sheets Integration
 google-api-python-client

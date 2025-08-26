@@ -6,6 +6,12 @@ from typing import Optional, Dict, Any
 from threading import Lock
 from enum import Enum
 
+# Import LangSmith tracer
+try:
+    from .langsmith_tracer import tracer
+except ImportError:
+    tracer = None
+    
 logger = logging.getLogger(__name__)
 
 
@@ -87,7 +93,14 @@ class OpenAIClient(BaseAIClient):
         try:
             import openai
             self.openai = openai
-            self.client = openai.OpenAI(api_key=self.api_key)
+            client = openai.OpenAI(api_key=self.api_key)
+            
+            # Wrap with LangSmith if available
+            if tracer:
+                self.client = tracer.wrap_openai_client(client)
+            else:
+                self.client = client
+                
         except ImportError:
             raise ImportError("Please install openai: pip install openai")
             
@@ -95,6 +108,7 @@ class OpenAIClient(BaseAIClient):
         """Make a completion request to OpenAI."""
         try:
             # Check if this is a model that only supports temperature=1.0 (o3 or gpt-5-mini)
+            # These models use internal reasoning mechanisms instead of temperature variation
             is_temp_restricted_model = 'o3' in self.model.lower() or 'gpt-5-mini' in self.model.lower()
             
             request_params = {
@@ -109,6 +123,13 @@ class OpenAIClient(BaseAIClient):
             if not is_temp_restricted_model:
                 request_params["temperature"] = temperature
             # For restricted models, we don't set temperature parameter (uses default 1.0)
+            
+            # Add reasoning effort for gpt-5-mini (medium effort for comparison tasks)
+            # Reference: https://platform.openai.com/docs/guides/reasoning
+            # Medium effort provides balanced reasoning for comparison tasks
+            if 'gpt-5-mini' in self.model.lower():
+                request_params["reasoning_effort"] = "medium"
+                logger.info("Using medium reasoning effort for gpt-5-mini")
             
             # Add any other kwargs
             for key, value in kwargs.items():
@@ -142,6 +163,14 @@ class AnthropicClient(BaseAIClient):
             
     def complete(self, prompt: str, temperature: float = 0.3, max_tokens: int = 4000, **kwargs) -> str:
         """Make a completion request to Anthropic."""
+        # Apply tracing decorator if available
+        if tracer:
+            return self._traced_complete(prompt, temperature, max_tokens, **kwargs)
+        else:
+            return self._raw_complete(prompt, temperature, max_tokens, **kwargs)
+    
+    def _raw_complete(self, prompt: str, temperature: float = 0.3, max_tokens: int = 4000, **kwargs) -> str:
+        """Raw completion request without tracing."""
         try:
             # For rubric parsing and prompt generation, use Opus
             if "extract" in prompt.lower() or "generate" in prompt.lower():
@@ -163,6 +192,12 @@ class AnthropicClient(BaseAIClient):
         except Exception as e:
             logger.error(f"Anthropic API error: {e}")
             raise
+    
+    def _traced_complete(self, prompt: str, temperature: float = 0.3, max_tokens: int = 4000, **kwargs) -> str:
+        """Traced completion request."""
+        # Wrap with tracing decorator
+        traced_func = tracer.trace_complete_call("Anthropic", self.model)(self._raw_complete)
+        return traced_func(prompt, temperature, max_tokens, **kwargs)
 
 
 class GeminiClient(BaseAIClient):
@@ -186,6 +221,14 @@ class GeminiClient(BaseAIClient):
             
     def complete(self, prompt: str, temperature: float = 0.3, **kwargs) -> str:
         """Make a completion request to Gemini."""
+        # Apply tracing decorator if available
+        if tracer:
+            return self._traced_complete(prompt, temperature, **kwargs)
+        else:
+            return self._raw_complete(prompt, temperature, **kwargs)
+    
+    def _raw_complete(self, prompt: str, temperature: float = 0.3, **kwargs) -> str:
+        """Raw completion request without tracing."""
         try:
             generation_config = self.genai.GenerationConfig(
                 temperature=temperature,
@@ -200,6 +243,12 @@ class GeminiClient(BaseAIClient):
         except Exception as e:
             logger.error(f"Gemini API error: {e}")
             raise
+    
+    def _traced_complete(self, prompt: str, temperature: float = 0.3, **kwargs) -> str:
+        """Traced completion request."""
+        # Wrap with tracing decorator
+        traced_func = tracer.trace_complete_call("Gemini", self.model)(self._raw_complete)
+        return traced_func(prompt, temperature, **kwargs)
 
 
 class AIClientFactory:

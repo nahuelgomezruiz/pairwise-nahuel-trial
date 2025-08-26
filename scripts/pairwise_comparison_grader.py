@@ -19,6 +19,7 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import defaultdict
 import time
+import math
 
 # Add src and root to path
 root_dir = Path(__file__).parent.parent
@@ -28,6 +29,12 @@ sys.path.append(str(root_dir))
 from src.ai_agent.ai_client_factory import AIClientFactory
 from src.sheets_integration.sheets_client import SheetsClient
 from sklearn.metrics import cohen_kappa_score
+
+# Import LangSmith tracer for observability
+try:
+    from src.ai_agent.langsmith_tracer import tracer
+except ImportError:
+    tracer = None
 
 # Configure logging
 logging.basicConfig(
@@ -123,6 +130,13 @@ class PairwiseComparisonGrader:
 
     def create_comparison_prompt(self, essay1: str, essay2: str, rubric: str) -> str:
         """Create a prompt for pairwise comparison."""
+        # Add tracing decorator if available
+        if tracer:
+            return self._traced_create_comparison_prompt(essay1, essay2, rubric)
+        return self._create_comparison_prompt_impl(essay1, essay2, rubric)
+    
+    def _create_comparison_prompt_impl(self, essay1: str, essay2: str, rubric: str) -> str:
+        """Implementation of create_comparison_prompt."""
         prompt = f"""Compare these two student essays and determine which is better. Infer the objective of the essays and judge which one did a better job.
 
 ESSAY A:
@@ -133,23 +147,34 @@ ESSAY B:
 
 Return a JSON object with:
 {{
-    "comparison": "A_BETTER" | "B_BETTER" | "SAME",
-    "confidence": "HIGH" | "MEDIUM" | "LOW",
-    "reasoning": "Brief explanation"
+    "reasoning": "Brief explanation",
+    "comparison": "A_BETTER" | "B_BETTER"
 }}
 
 Where:
 - "A_BETTER" means Essay A is better than Essay B
-- "B_BETTER" means Essay B is better than Essay A  
-- "SAME" means the essays are of similar quality 
-- "confidence" reflects how certain you are about the comparison
+- "B_BETTER" means Essay B is better than Essay A
 
 Respond ONLY with the JSON object, no additional text."""
         
         return prompt
     
+    def _traced_create_comparison_prompt(self, essay1: str, essay2: str, rubric: str) -> str:
+        """Traced version of create_comparison_prompt."""
+        if tracer:
+            traced_func = tracer.trace_comparison(self._create_comparison_prompt_impl)
+            return traced_func(essay1, essay2, rubric)
+        return self._create_comparison_prompt_impl(essay1, essay2, rubric)
+    
     def compare_essays(self, test_essay: str, sample_essay: str, rubric: str) -> Dict:
         """Compare a test essay with a sample essay."""
+        # Add tracing decorator if available
+        if tracer:
+            return self._traced_compare_essays(test_essay, sample_essay, rubric)
+        return self._compare_essays_impl(test_essay, sample_essay, rubric)
+    
+    def _compare_essays_impl(self, test_essay: str, sample_essay: str, rubric: str) -> Dict:
+        """Implementation of compare_essays."""
         prompt = self.create_comparison_prompt(test_essay, sample_essay, rubric)
         
         try:
@@ -159,21 +184,19 @@ Respond ONLY with the JSON object, no additional text."""
             result = json.loads(response.strip())
             
             # Validate response format
-            required_fields = ['comparison', 'confidence']
+            required_fields = ['comparison']
             if not all(field in result for field in required_fields):
                 logger.error(f"Missing required fields in response: {result}")
                 return {
                     'comparison': 'ERROR',
-                    'reasoning': 'Missing required fields',
-                    'confidence': 'LOW'
+                    'reasoning': 'Missing required fields'
                 }
             
-            if result['comparison'] not in ['A_BETTER', 'B_BETTER', 'SAME']:
+            if result['comparison'] not in ['A_BETTER', 'B_BETTER']:
                 logger.error(f"Invalid comparison response: {result}")
                 return {
                     'comparison': 'ERROR',
-                    'reasoning': 'Invalid comparison value',
-                    'confidence': 'LOW'
+                    'reasoning': 'Invalid comparison value'
                 }
             
             # Add reasoning if not present
@@ -186,16 +209,29 @@ Respond ONLY with the JSON object, no additional text."""
             logger.error(f"Failed to parse JSON response: {response[:200]}... Error: {e}")
             return {
                 'comparison': 'ERROR',
-                'reasoning': f'JSON parse error: {str(e)}',
-                'confidence': 'LOW'
+                'reasoning': f'JSON parse error: {str(e)}'
             }
         except Exception as e:
             logger.error(f"Error during comparison: {e}")
             return {
                 'comparison': 'ERROR',
-                'reasoning': str(e),
-                'confidence': 'LOW'
+                'reasoning': str(e)
             }
+    
+    def _traced_compare_essays(self, test_essay: str, sample_essay: str, rubric: str) -> Dict:
+        """Traced version of compare_essays."""
+        if tracer:
+            traced_func = tracer.trace_comparison(self._compare_essays_impl)
+            result = traced_func(test_essay, sample_essay, rubric)
+            
+            # Log the comparison result for observability
+            if 'comparison' in result:
+                essay_a_id = str(hash(test_essay[:100]))  # Simple ID generation
+                essay_b_id = str(hash(sample_essay[:100]))
+                tracer.log_comparison_result(essay_a_id, essay_b_id, result['comparison'])
+            
+            return result
+        return self._compare_essays_impl(test_essay, sample_essay, rubric)
     
     def parallel_compare_with_samples(self, test_essay: str, sample_essays: List[Dict],
                                      rubric: str, max_workers: int = 20) -> List[Dict]:
@@ -223,8 +259,7 @@ Respond ONLY with the JSON object, no additional text."""
                         'sample_id': sample['essay_id'],
                         'sample_score': sample['score'],
                         'comparison': result['comparison'],
-                        'reasoning': result['reasoning'],
-                        'confidence': result.get('confidence', 'UNKNOWN')
+                        'reasoning': result['reasoning']
                     })
                 except Exception as e:
                     logger.error(f"Comparison failed for sample {sample['essay_id']}: {e}")
@@ -232,8 +267,7 @@ Respond ONLY with the JSON object, no additional text."""
                         'sample_id': sample['essay_id'],
                         'sample_score': sample['score'],
                         'comparison': 'ERROR',
-                        'reasoning': str(e),
-                        'confidence': 'LOW'
+                        'reasoning': str(e)
                     })
         
         return comparisons
@@ -369,9 +403,7 @@ Respond ONLY with the JSON object, no additional text."""
             return 3.0  # Fallback
     
     def calculate_weighted_score(self, comparisons: List[Dict]) -> float:
-        """Calculate score using confidence-weighted average."""
-        confidence_weights = {'HIGH': 1.0, 'MEDIUM': 0.7, 'LOW': 0.3}
-        
+        """Calculate score using weighted average."""
         weighted_scores = []
         total_weight = 0
         
@@ -379,7 +411,7 @@ Respond ONLY with the JSON object, no additional text."""
             if comp['comparison'] == 'ERROR':
                 continue
                 
-            weight = confidence_weights.get(comp.get('confidence', 'MEDIUM'), 0.5)
+            weight = 1.0  # Equal weight for all comparisons now
             sample_score = comp['sample_score']
             
             if comp['comparison'] == 'SAME':
@@ -454,10 +486,9 @@ Respond ONLY with the JSON object, no additional text."""
                 continue
                 
             sample_score = comp['sample_score']
-            confidence = comp.get('confidence', 'MEDIUM')
             
-            # Observation noise based on confidence
-            obs_noise = {'HIGH': 0.5, 'MEDIUM': 1.0, 'LOW': 2.0}.get(confidence, 1.0)
+            # Fixed observation noise (previously was MEDIUM level)
+            obs_noise = 1.0
             
             if comp['comparison'] == 'SAME':
                 # Direct observation of score level
@@ -587,6 +618,14 @@ def format_sheets_data(results: List[Dict], sample_essays_df: pd.DataFrame,
             f'{method.title()} Rounded'
         ])
     
+    # Add special columns for original scoring method
+    if 'original' in scoring_methods:
+        headers.extend([
+            'Original Up Rounded',
+            'Abs Diff (Orig Rounded)',
+            'Abs Diff (Orig Up Rounded)'
+        ])
+    
     # Add comparison columns for each sample
     for sample_id, sample_score in zip(sample_ids, sample_scores):
         score_display = int(sample_score) if isinstance(sample_score, (int, float)) else sample_score
@@ -599,6 +638,8 @@ def format_sheets_data(results: List[Dict], sample_essays_df: pd.DataFrame,
     sample_row = ['SAMPLE ESSAYS', '-']
     for _ in range(len(scoring_methods) * 2):  # Skip prediction columns
         sample_row.append('-')
+    if 'original' in scoring_methods:
+        sample_row.extend(['-', '-', '-'])  # Skip special original columns
     for sample_text in sample_texts:
         sample_row.append(sample_text)
     data_rows.append(sample_row)
@@ -615,14 +656,40 @@ def format_sheets_data(results: List[Dict], sample_essays_df: pd.DataFrame,
         ]
         
         # Add scores for each method
+        original_score = None
+        original_rounded = None
         for method in scoring_methods:
             if 'all_scores' in result and method in result['all_scores']:
                 score = result['all_scores'][method]
                 row.append(f"{score:.2f}")
-                row.append(int(round(score)))
+                rounded_score = int(round(score))
+                row.append(rounded_score)
+                if method == 'original':
+                    original_score = score
+                    original_rounded = rounded_score
             else:
                 row.append('-')
                 row.append('-')
+        
+        # Add special columns for original scoring method
+        if 'original' in scoring_methods and original_score is not None:
+            # Calculate up-rounded score (rounds .5 up)
+            if original_score - int(original_score) == 0.5:
+                original_up_rounded = int(original_score) + 1
+            else:
+                original_up_rounded = int(round(original_score))
+            
+            row.append(original_up_rounded)
+            
+            # Calculate absolute differences
+            actual_score_int = int(result['actual_score'])
+            abs_diff_rounded = abs(original_rounded - actual_score_int)
+            abs_diff_up_rounded = abs(original_up_rounded - actual_score_int)
+            
+            row.append(abs_diff_rounded)
+            row.append(abs_diff_up_rounded)
+        elif 'original' in scoring_methods:
+            row.extend(['-', '-', '-'])  # No original score available
         
         # Add comparison results for each sample
         comparisons_dict = {comp['sample_id']: comp for comp in result['comparisons']}
@@ -673,6 +740,8 @@ def format_sheets_data(results: List[Dict], sample_essays_df: pd.DataFrame,
     qwk_header_row = ['QWK SCORES', '']
     for method in scoring_methods:
         qwk_header_row.extend([f'{method.title()}', ''])
+    if 'original' in scoring_methods:
+        qwk_header_row.extend(['', '', ''])  # Empty cells for special columns
     for _ in sample_ids:
         qwk_header_row.append('')
     data_rows.append(qwk_header_row)
@@ -696,6 +765,11 @@ def format_sheets_data(results: List[Dict], sample_essays_df: pd.DataFrame,
             ])
         else:
             qwk_row_formats.extend([{}, {}])
+    
+    # Add empty cells for special columns if original method exists
+    if 'original' in scoring_methods:
+        qwk_values_row.extend(['', '', ''])  # Empty cells for special columns
+        qwk_row_formats.extend([{}, {}, {}])
     
     for _ in sample_ids:
         qwk_values_row.append('')
@@ -748,14 +822,14 @@ def format_sheets_data(results: List[Dict], sample_essays_df: pd.DataFrame,
                 if sample_score_int > actual_score:
                     to_right_counts[sample_id] += 1
                     # Sample should be better (higher score), but if labeled as BETTER (test is better), it's underrated
-                    if 'BETTER' in comparison_result and 'WORSE' not in comparison_result:
+                    if isinstance(comparison_result, str) and 'BETTER' in comparison_result and 'WORSE' not in comparison_result:
                         underrated_counts[sample_id] += 1
                 
                 # Check if sample is to the left (sample score < actual score)
                 elif sample_score_int < actual_score:
                     to_left_counts[sample_id] += 1
                     # Sample should be worse (lower score), but if labeled as WORSE (sample is better), it's overrated
-                    if 'WORSE' in comparison_result:
+                    if isinstance(comparison_result, str) and 'WORSE' in comparison_result:
                         overrated_counts[sample_id] += 1
                         
         except (ValueError, IndexError) as e:
@@ -848,6 +922,26 @@ def write_to_sheets(sheets_client: SheetsClient, spreadsheet_id: str,
         total_rows = len(data_rows)
         sheet_id = worksheet.id
         
+        # Calculate column positions dynamically (moved up here)
+        # Count scoring methods from the headers
+        scoring_methods_count = 0
+        has_original_special_cols = False
+        
+        # Check headers to count scoring methods and detect special columns
+        if data_rows and len(data_rows) > 0:
+            headers = data_rows[0]
+            for idx, header in enumerate(headers):
+                if header.endswith(' Score'):
+                    scoring_methods_count += 1
+                if header == 'Original Up Rounded':
+                    has_original_special_cols = True
+        
+        # Calculate comparison start column index
+        # 2 base columns (Essay Text, Actual Score) + 2 per scoring method
+        comparison_start_col_index = 2 + (scoring_methods_count * 2)
+        if has_original_special_cols:
+            comparison_start_col_index += 3  # Add 3 for special columns
+        
         # Build ALL formatting requests in a single batch
         all_requests = []
         
@@ -866,14 +960,14 @@ def write_to_sheets(sheets_client: SheetsClient, spreadsheet_id: str,
                     "fields": "pixelSize"
                 }
             },
-            # Score/error columns (B-F) - extra thin for numbers
+            # Score/error columns - extra thin for numbers
             {
                 "updateDimensionProperties": {
                     "range": {
                         "sheetId": sheet_id,
                         "dimension": "COLUMNS",
-                        "startIndex": 1,   # Columns B-F 
-                        "endIndex": 6      # up to but not including column G
+                        "startIndex": 1,   # Starting from column B
+                        "endIndex": comparison_start_col_index  # Up to comparison columns
                     },
                     "properties": {"pixelSize": 40},  # Extra thin for score/error numbers
                     "fields": "pixelSize"
@@ -895,8 +989,7 @@ def write_to_sheets(sheets_client: SheetsClient, spreadsheet_id: str,
         ])
         
         # 2. Comparison cell coloring (BETTER/WORSE/SAME/ERROR)
-        comparison_start_col_index = 6  # 0-based index for column G
-        sample_count = max(0, total_columns - (comparison_start_col_index + 1))  # exclude last QWK col
+        sample_count = max(0, total_columns - comparison_start_col_index)
         
         if sample_count > 0 and total_rows > 1:
             comparison_grid_range = {
@@ -932,28 +1025,57 @@ def write_to_sheets(sheets_client: SheetsClient, spreadsheet_id: str,
                     }
                 })
         
-        # 3. Gradient for Abs Err (Rounded) column
-        all_requests.append({
-            "addConditionalFormatRule": {
-                "rule": {
-                    "ranges": [{
-                        "sheetId": sheet_id,
-                        "startRowIndex": 2,  # Skip header and sample row
-                        "endRowIndex": total_rows,
-                        "startColumnIndex": 5,  # Column F (Abs Err Rounded)
-                        "endColumnIndex": 6
-                    }],
-                    "gradientRule": {
-                        "minpoint": {"color": {"red": 0.5, "green": 1.0, "blue": 0.5}, "type": "NUMBER", "value": "0"},    # bright green at 0 error
-                        "midpoint": {"color": {"red": 1.0, "green": 1.0, "blue": 0.3}, "type": "NUMBER", "value": "1.5"}, # yellow at moderate error
-                        "maxpoint": {"color": {"red": 1.0, "green": 0.3, "blue": 0.3}, "type": "NUMBER", "value": "3"}     # bright red at high error
-                    }
-                },
-                "index": 0
-            }
-        })
+        # 3. Gradient for Abs Diff columns (if present)
+        if has_original_special_cols:
+            # Calculate positions of the absolute difference columns
+            # They should be right before the comparison columns
+            abs_diff_rounded_col = comparison_start_col_index - 2  # Second to last before comparisons
+            abs_diff_up_rounded_col = comparison_start_col_index - 1  # Last before comparisons
+            
+            # Gradient for Abs Diff (Orig Rounded) column
+            all_requests.append({
+                "addConditionalFormatRule": {
+                    "rule": {
+                        "ranges": [{
+                            "sheetId": sheet_id,
+                            "startRowIndex": 2,  # Skip header and sample row
+                            "endRowIndex": total_rows,
+                            "startColumnIndex": abs_diff_rounded_col,
+                            "endColumnIndex": abs_diff_rounded_col + 1
+                        }],
+                        "gradientRule": {
+                            "minpoint": {"color": {"red": 0.5, "green": 1.0, "blue": 0.5}, "type": "NUMBER", "value": "0"},    # bright green at 0 error
+                            "midpoint": {"color": {"red": 1.0, "green": 1.0, "blue": 0.3}, "type": "NUMBER", "value": "1.5"}, # yellow at moderate error
+                            "maxpoint": {"color": {"red": 1.0, "green": 0.3, "blue": 0.3}, "type": "NUMBER", "value": "3"}     # bright red at high error
+                        }
+                    },
+                    "index": 0
+                }
+            })
+            
+            # Gradient for Abs Diff (Orig Up Rounded) column
+            all_requests.append({
+                "addConditionalFormatRule": {
+                    "rule": {
+                        "ranges": [{
+                            "sheetId": sheet_id,
+                            "startRowIndex": 2,  # Skip header and sample row
+                            "endRowIndex": total_rows,
+                            "startColumnIndex": abs_diff_up_rounded_col,
+                            "endColumnIndex": abs_diff_up_rounded_col + 1
+                        }],
+                        "gradientRule": {
+                            "minpoint": {"color": {"red": 0.5, "green": 1.0, "blue": 0.5}, "type": "NUMBER", "value": "0"},    # bright green at 0 error
+                            "midpoint": {"color": {"red": 1.0, "green": 1.0, "blue": 0.3}, "type": "NUMBER", "value": "1.5"}, # yellow at moderate error
+                            "maxpoint": {"color": {"red": 1.0, "green": 0.3, "blue": 0.3}, "type": "NUMBER", "value": "3"}     # bright red at high error
+                        }
+                    },
+                    "index": 0
+                }
+            })
         
-        # 4. White background for columns A-E
+        # 4. White background for columns before comparisons (except gradient columns)
+        white_bg_end_col = comparison_start_col_index - 2 if has_original_special_cols else comparison_start_col_index
         all_requests.append({
             "addConditionalFormatRule": {
                 "rule": {
@@ -962,7 +1084,7 @@ def write_to_sheets(sheets_client: SheetsClient, spreadsheet_id: str,
                         "startRowIndex": 2,
                         "endRowIndex": total_rows,
                         "startColumnIndex": 0,  # Column A
-                        "endColumnIndex": 5     # up to but not including F
+                        "endColumnIndex": white_bg_end_col  # up to but not including gradient columns
                     }],
                     "booleanRule": {
                         "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": "=TRUE"}]},

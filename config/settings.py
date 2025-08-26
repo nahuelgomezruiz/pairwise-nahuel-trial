@@ -18,6 +18,12 @@ CONFIG_DIR = PROJECT_ROOT / "config"
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GOOGLE_SHEETS_CREDENTIALS_PATH = os.getenv("GOOGLE_SHEETS_CREDENTIALS_PATH", "credentials.json")
 
+# LangSmith settings for observability
+LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY")
+LANGSMITH_TRACING = os.getenv("LANGSMITH_TRACING", "false").lower() == "true"
+LANGSMITH_PROJECT_NAME = os.getenv("LANGSMITH_PROJECT_NAME", "nahuel-essay-grading")
+LANGSMITH_ENDPOINT = os.getenv("LANGSMITH_ENDPOINT", "https://api.smith.langchain.com")
+
 # Model settings
 DEFAULT_MODEL = "o3"
 MODEL_TEMPERATURE = None # Lower temperature for more consistent grading (not used for o-series models)

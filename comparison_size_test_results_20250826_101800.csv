@@ -1,6 +1,0 @@
-Comparison Size,Best Method,Best QWK,Processing Time,Worksheet,Original QWK,Elo QWK,Bradley_Terry QWK,Weighted QWK,Percentile QWK,Bayesian QWK
-3,percentile,0.6174,628.3s,venus_3comp_20250826_100904,0.6140,0.3131,0.5379,0.3205,0.6174,0.5594
-4,original,0.6197,107.7s,venus_4comp_20250826_101251,0.6197,0.3203,0.5505,0.3533,0.6128,0.5634
-5,percentile,0.6170,62.0s,venus_5comp_20250826_101423,0.6059,0.3104,0.5311,0.3378,0.6170,0.5529
-6,percentile,0.6083,57.5s,venus_6comp_20250826_101549,0.6050,0.3001,0.5466,0.3407,0.6083,0.5398
-7,percentile,0.6307,69.9s,venus_7comp_20250826_101729,0.6126,0.3427,0.5640,0.3412,0.6307,0.5026

@@ -1,0 +1,61 @@
+# Enhanced requirements for the modular essay scoring system
+
+# Core dependencies
+pandas>=1.5.0
+numpy>=1.20.0
+scikit-learn>=1.1.0
+scipy>=1.9.0
+
+# LLM Integration
+openai>=1.0.0
+anthropic>=0.18.0
+google-generativeai>=0.3.0
+langsmith>=0.1.0
+
+# Google Sheets Integration
+google-api-python-client>=2.0.0
+google-auth>=2.0.0
+gspread>=5.0.0
+
+# Kaggle API
+kaggle>=1.5.0
+
+# Data Processing and Analysis
+charset-normalizer>=3.0.0
+sentence-transformers>=2.2.0
+umap-learn>=0.5.0
+
+# Excel export support (optional)
+openpyxl>=3.0.0
+
+# Development and Testing
+jupyter>=1.0.0
+pytest>=7.0.0
+python-dotenv>=0.19.0
+
+# Web framework (for future API endpoints)
+fastapi>=0.68.0
+uvicorn>=0.15.0
+
+# Monitoring and observability
+rich>=12.0.0  # For enhanced CLI output
+tqdm>=4.64.0  # Progress bars
+
+# Configuration management
+pydantic>=1.10.0  # For settings validation
+pydantic-settings>=2.0.0
+
+# Async support
+aiohttp>=3.8.0
+asyncio-throttle>=1.0.0
+
+# Database support (for future persistence)
+sqlalchemy>=1.4.0
+alembic>=1.8.0
+
+# Caching
+redis>=4.3.0
+
+# Utilities
+click>=8.0.0  # Enhanced CLI support
+colorlog>=6.7.0  # Colored logging
