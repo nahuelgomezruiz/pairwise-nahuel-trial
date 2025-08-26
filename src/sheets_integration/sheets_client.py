@@ -685,14 +685,8 @@ class SheetsClient:
                     qwk = self.calculate_quadratic_weighted_kappa(actual_scores, predicted_scores)
                     logger.info(f"Calculated QWK for CSV export: {qwk:.4f}")
                     
-                    # Optionally add QWK as metadata in a separate file
-                    metadata_path = csv_path_obj.with_suffix('.metadata.txt')
-                    with open(metadata_path, 'w') as f:
-                        f.write(f"Run ID: {run_id}\n")
-                        f.write(f"Number of essays: {len(scores)}\n")
-                        f.write(f"QWK: {qwk:.4f}\n")
-                        f.write(f"Export timestamp: {datetime.now().isoformat()}\n")
-                    logger.info(f"Saved metadata to: {metadata_path}")
+                    # Log metadata instead of creating separate file
+                    logger.info(f"Export metadata - Run ID: {run_id}, Essays: {len(scores)}, QWK: {qwk:.4f}, Timestamp: {datetime.now().isoformat()}")
             
             return True
             

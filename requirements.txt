@@ -1,31 +1,42 @@
-# Core dependencies
-pandas
-numpy
-scikit-learn
-scipy
+# Essay Scoring System Requirements
+# Core dependencies with version constraints for stability
+
+# Core data processing
+pandas>=1.5.0
+numpy>=1.20.0
+scikit-learn>=1.1.0
+scipy>=1.9.0
 
 # LLM Integration
-openai
+openai>=1.0.0
 anthropic>=0.18.0
 google-generativeai>=0.3.0
 langsmith>=0.1.0
 
 # Google Sheets Integration
-google-api-python-client
-google-auth
-gspread
+google-api-python-client>=2.0.0
+google-auth>=2.0.0
+gspread>=5.0.0
 
 # Kaggle API
-kaggle
+kaggle>=1.5.0
+
+# Data Processing and Analysis
+charset-normalizer>=3.0.0
+sentence-transformers>=2.2.0
+umap-learn>=0.5.0
+
+# Output formats
+openpyxl>=3.0.0  # Excel export support
 
 # Development and Testing
-jupyter
-pytest
-python-dotenv
+jupyter>=1.0.0
+pytest>=7.0.0
+python-dotenv>=0.19.0
 
-# Data Processing
-charset-normalizer
+# Enhanced CLI and monitoring
+rich>=12.0.0  # Better CLI output
+tqdm>=4.64.0  # Progress bars
 
-# Embeddings and clustering
-sentence-transformers
-umap-learn
+# Configuration management
+pydantic>=1.10.0  # Settings validation

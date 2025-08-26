@@ -17,6 +17,9 @@ class OutputFormatter:
         """Initialize output formatter."""
         self.format = format_type.lower()
         self.output_dir = Path(output_dir)
+        # Ensure output goes to a proper subdirectory, not root
+        if self.output_dir == Path('.'):
+            self.output_dir = Path('./output')
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
         self.supported_formats = ['json', 'csv', 'excel', 'sheets']

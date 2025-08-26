@@ -8,3 +8,10 @@ __pycache__/
 *.joblib
 exports/
 .env
+
+# Unnecessary temporary files
+*.metadata.txt
+watchdog_restart.log
+baseline_*.log
+optimization_results_*.csv
+direct_optimization.log
