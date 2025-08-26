@@ -9,6 +9,7 @@ load_dotenv()
 
 # Project paths
 PROJECT_ROOT = Path(__file__).parent.parent
+SRC_DIR = PROJECT_ROOT / "src"
 DATA_DIR = PROJECT_ROOT / "data"
 KAGGLE_DATA_DIR = DATA_DIR / "kaggle"
 OUTPUT_DIR = DATA_DIR / "output"
@@ -25,13 +26,13 @@ LANGSMITH_PROJECT_NAME = os.getenv("LANGSMITH_PROJECT_NAME", "nahuel-essay-gradi
 LANGSMITH_ENDPOINT = os.getenv("LANGSMITH_ENDPOINT", "https://api.smith.langchain.com")
 
 # Model settings
-DEFAULT_MODEL = "o3"
+DEFAULT_MODEL = "openai:gpt-5-mini"
 MODEL_TEMPERATURE = None # Lower temperature for more consistent grading (not used for o-series models)
 MAX_TOKENS = None # Not used for o-series models
 REASONING_EFFORT = "high" # For o-series models: "low", "medium", or "high"
 
 # Grading settings
-RUBRIC_PATH = CONFIG_DIR / "rubric.txt"
+RUBRIC_PATH = SRC_DIR / "data" / "rubric.txt"
 BATCH_SIZE = 10  # Number of essays to process in parallel
 
 # Kaggle settings

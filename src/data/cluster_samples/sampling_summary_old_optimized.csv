@@ -1,0 +1,8 @@
+cluster_name,original_count,sample_count,sample_file,original_avg_score,sample_avg_score
+electoral_college_debate,2046,6,electoral_college_debate_optimized.csv,3.0,3.0
+seagoing_cowboys_program,1648,6,seagoing_cowboys_program_optimized.csv,2.47,2.5
+venus_exploration_worthiness,3019,6,venus_exploration_worthiness_optimized.csv,2.79,3.5
+emotion_recognition_schools,1682,6,emotion_recognition_schools_optimized.csv,2.93,3.33
+car_free_cities,1972,6,car_free_cities_optimized.csv,3.1,3.0
+face_on_mars_evidence,2092,6,face_on_mars_evidence_optimized.csv,2.85,2.5
+driverless_cars_policy,3487,6,driverless_cars_policy_optimized.csv,3.22,3.5

@@ -1,0 +1,8 @@
+cluster_name,qwk,iteration,sample_file,sample_avg_score,n_test_essays
+electoral_college_debate,0.6326449563145353,5,electoral_college_debate_optimal.csv,3.0,200
+seagoing_cowboys_program,0.4499738082765846,5,seagoing_cowboys_program_optimal.csv,2.6666666666666665,200
+venus_exploration_worthiness,0.6402305704631286,1,venus_exploration_worthiness_optimal.csv,2.5,200
+emotion_recognition_schools,0.6505626836785894,2,emotion_recognition_schools_optimal.csv,2.5,200
+car_free_cities,0.6021356332460599,2,car_free_cities_optimal.csv,2.6666666666666665,200
+face_on_mars_evidence,0.46955653785826323,1,face_on_mars_evidence_optimal.csv,2.6666666666666665,200
+driverless_cars_policy,0.5775363699892002,2,driverless_cars_policy_optimal.csv,3.1666666666666665,200

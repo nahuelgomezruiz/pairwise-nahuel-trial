@@ -88,23 +88,154 @@ class GradingApp:
         
     def _process_single_cluster(self, cluster_name: str, limit: int, 
                                strategy: str) -> Dict[str, List[Dict]]:
-        """Process a single cluster."""
+        """Process a single cluster using optimized flat parallelization."""
         logger.info(f"Processing single cluster: {cluster_name}")
         
-        results, predicted_scores, actual_scores = self.grader.grade_cluster_essays(
-            cluster_name, limit, strategy
-        )
-        
-        # Calculate metrics
-        qwk = calculate_qwk(actual_scores, predicted_scores)
-        logger.info(f"Cluster {cluster_name} QWK: {qwk:.4f}")
-        
-        return {cluster_name: results}
+        # Use the optimized flat parallelization method for single clusters too
+        return self._process_multiple_clusters_flat([cluster_name], limit, strategy)
         
     def _process_multiple_clusters(self, clusters: List[str], limit: int,
                                   max_parallel_essays: int, strategy: str) -> Dict[str, List[Dict]]:
-        """Process multiple clusters in parallel."""
-        logger.info(f"Processing {len(clusters)} clusters in parallel")
+        """Process multiple clusters using optimized flat parallelization by default."""
+        # Use the optimized flat parallel method by default
+        return self._process_multiple_clusters_flat(clusters, limit, strategy)
+    
+    def _process_multiple_clusters_flat(self, clusters: List[str], limit: int, 
+                                       strategy: str) -> Dict[str, List[Dict]]:
+        """Process multiple clusters using flat parallelization for maximum throughput."""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        
+        logger.info(f"Processing {len(clusters)} clusters using OPTIMIZED flat parallelization")
+        
+        # Prepare all comparison tasks upfront
+        all_comparison_tasks = []
+        essay_metadata = {}  # Map task_id to essay metadata
+        task_counter = 0
+        
+        rubric = self.grader.load_rubric()
+        
+        for cluster_name in clusters:
+            sample_df, test_df = self.cluster_manager.get_cluster_data(cluster_name)
+            sample_essays = self.cluster_manager.prepare_sample_essays(sample_df)
+            test_essays_df = self.cluster_manager.filter_test_essays(test_df, limit)
+            
+            for _, test_row in test_essays_df.iterrows():
+                essay_id = test_row['essay_id']
+                essay_text = test_row['full_text']
+                actual_score = test_row['score']
+                
+                # Create tasks for all comparisons for this essay
+                essay_tasks = []
+                for sample in sample_essays:
+                    task_id = f"{essay_id}_{sample['essay_id']}_{task_counter}"
+                    task_counter += 1
+                    
+                    all_comparison_tasks.append({
+                        'task_id': task_id,
+                        'test_essay': essay_text,
+                        'sample_essay': sample['text'],
+                        'rubric': rubric,
+                        'sample_id': sample['essay_id'],
+                        'sample_score': sample['score']
+                    })
+                    essay_tasks.append(task_id)
+                
+                # Store essay metadata
+                essay_metadata[essay_id] = {
+                    'essay_id': essay_id,
+                    'actual_score': actual_score,
+                    'essay_text': essay_text,
+                    'cluster_name': cluster_name,
+                    'task_ids': essay_tasks
+                }
+        
+        logger.info(f"Created {len(all_comparison_tasks)} comparison tasks for {len(essay_metadata)} essays")
+        logger.info(f"Using {min(200, len(all_comparison_tasks))} parallel workers for maximum throughput")
+        
+        # Execute all comparisons in parallel
+        comparison_results = {}
+        with ThreadPoolExecutor(max_workers=min(200, len(all_comparison_tasks))) as executor:
+            # Submit all comparison tasks at once
+            future_to_task = {
+                executor.submit(
+                    self.grader.comparison_engine.compare_essays,
+                    task['test_essay'],
+                    task['sample_essay'],
+                    task['rubric'],
+                    essay_metadata.get(task['task_id'].split('_')[0], {}).get('cluster_name')
+                ): task
+                for task in all_comparison_tasks
+            }
+            
+            completed = 0
+            total = len(future_to_task)
+            
+            # Collect results
+            for future in as_completed(future_to_task):
+                task = future_to_task[future]
+                task_id = task['task_id']
+                
+                try:
+                    result = future.result(timeout=30)
+                    comparison_results[task_id] = {
+                        'sample_id': task['sample_id'],
+                        'sample_score': task['sample_score'],
+                        'comparison': result
+                    }
+                except Exception as e:
+                    logger.error(f"Comparison failed for task {task_id}: {e}")
+                    comparison_results[task_id] = {
+                        'sample_id': task['sample_id'],
+                        'sample_score': task['sample_score'],
+                        'comparison': {'comparison': 'ERROR', 'reasoning': str(e)}
+                    }
+                
+                completed += 1
+                if completed % 50 == 0 or completed == total:
+                    logger.info(f"Progress: {completed}/{total} comparisons completed ({100*completed/total:.1f}%)")
+        
+        # Assemble results by essay
+        all_results = {}
+        for essay_id, metadata in essay_metadata.items():
+            # Gather all comparisons for this essay
+            essay_comparisons = []
+            for task_id in metadata['task_ids']:
+                if task_id in comparison_results:
+                    essay_comparisons.append(comparison_results[task_id])
+            
+            # Calculate scores
+            all_scores = self.grader.calculate_all_scores(essay_comparisons)
+            
+            # Use selected strategy
+            if strategy and strategy in self.grader.scoring_strategies:
+                predicted_score = self.grader.scoring_strategies[strategy].calculate_score(essay_comparisons)
+            else:
+                predicted_score = all_scores.get('original', 3.0)
+            
+            # Store result
+            cluster_name = metadata['cluster_name']
+            if cluster_name not in all_results:
+                all_results[cluster_name] = []
+            
+            all_results[cluster_name].append({
+                'essay_id': essay_id,
+                'actual_score': metadata['actual_score'],
+                'predicted_score': predicted_score,
+                'comparisons': essay_comparisons,
+                'essay_text': metadata['essay_text'],
+                'cluster_name': cluster_name,
+                'all_scores': all_scores,
+                'strategy_used': strategy or 'original'
+            })
+            
+            logger.info(f"Essay {essay_id}: Predicted={predicted_score:.2f}, Actual={metadata['actual_score']}")
+        
+        return all_results
+    
+    def _process_multiple_clusters_nested(self, clusters: List[str], limit: int,
+                                  max_parallel_essays: int, strategy: str) -> Dict[str, List[Dict]]:
+        """Process multiple clusters in parallel (legacy nested approach)."""
+        logger.info(f"Processing {len(clusters)} clusters using LEGACY nested parallelization (slower)")
         
         all_results = {}
         

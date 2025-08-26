@@ -3,8 +3,11 @@
 import logging
 from typing import Optional, Dict, Any, List
 from pathlib import Path
+from datetime import datetime
+import pandas as pd
 
 from src.sheets_integration.sheets_client import SheetsClient
+from .rich_sheets_formatter import RichSheetsFormatter
 
 logger = logging.getLogger(__name__)
 
@@ -25,17 +28,31 @@ class SheetsIntegration:
                            data: List[List], headers: List[str]) -> str:
         """Create a new sheet with grading results."""
         try:
-            # Prepare data with headers
-            sheet_data = [headers] + data
+            # Convert data to the format expected by write_scores_to_sheet
+            scores = []
+            for row in data:
+                if len(row) >= 3:  # Ensure we have at least essay_id, actual, predicted
+                    scores.append({
+                        'essay_id': row[0],
+                        'actual_score': row[1],
+                        'predicted_score': row[2],
+                        'comparisons': row[3] if len(row) > 3 else {}
+                    })
             
-            # Create or update sheet
-            worksheet = self.client.create_or_update_sheet(
-                spreadsheet_id, sheet_name, sheet_data
+            # Write scores using the existing method
+            success = self.client.write_scores_to_sheet(
+                scores=scores,
+                spreadsheet_id=spreadsheet_id,
+                worksheet_name=sheet_name,
+                create_headers=True
             )
             
-            logger.info(f"Created results sheet: {sheet_name}")
-            return worksheet.title
-            
+            if success:
+                logger.info(f"Created results sheet: {sheet_name}")
+                return sheet_name
+            else:
+                raise Exception("Failed to write scores to sheet")
+                
         except Exception as e:
             logger.error(f"Failed to create results sheet: {e}")
             raise
@@ -49,27 +66,123 @@ class SheetsIntegration:
         except Exception as e:
             logger.warning(f"Failed to format sheet: {e}")
             
-    def export_results(self, results: Dict[str, Any], spreadsheet_id: str) -> Dict[str, str]:
+    def export_results(self, results: Dict[str, Any], spreadsheet_id: str, 
+                       use_rich_format: bool = True) -> Dict[str, str]:
         """Export grading results to Google Sheets."""
         created_sheets = {}
         
         for cluster_name, cluster_results in results.items():
             try:
-                # Format data for sheets
-                formatted_data, headers = self._format_cluster_results(cluster_results)
+                # Generate worksheet name with timestamp
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                sheet_name = f"{cluster_name}_{timestamp}"
                 
-                # Create sheet
-                sheet_name = f"{cluster_name}_results"
-                self.create_results_sheet(
-                    spreadsheet_id, sheet_name, formatted_data, headers
-                )
+                if use_rich_format:
+                    # Use the rich formatter for detailed output
+                    # First, we need to load the sample essays for this cluster
+                    try:
+                        cluster_samples_dir = Path(__file__).parent.parent / "data" / "cluster_samples"
+                        
+                        # Find the appropriate sample file for this cluster
+                        sample_file = None
+                        for file in cluster_samples_dir.glob("*.csv"):
+                            if cluster_name in file.stem:
+                                # Try the optimized file first, then optimal, then regular sample
+                                if "optimized" in file.stem:
+                                    sample_file = file
+                                    break
+                                elif "optimal" in file.stem and sample_file is None:
+                                    sample_file = file
+                                elif "sample" in file.stem and sample_file is None:
+                                    sample_file = file
+                        
+                        if sample_file and sample_file.exists():
+                            sample_essays_df = pd.read_csv(sample_file)
+                            
+                            # Calculate QWK for this cluster
+                            actual_scores = [r['actual_score'] for r in cluster_results]
+                            predicted_scores = [r['predicted_score'] for r in cluster_results]
+                            from src.utils.metrics import calculate_qwk
+                            qwk = calculate_qwk(actual_scores, predicted_scores)
+                            
+                            # Format data using rich formatter
+                            data_rows, cell_formats = RichSheetsFormatter.format_sheets_data(
+                                cluster_results, sample_essays_df, qwk, cluster_name
+                            )
+                            
+                            # Write to sheets with rich formatting
+                            success = RichSheetsFormatter.write_to_sheets(
+                                self.client, spreadsheet_id, sheet_name, data_rows, cell_formats
+                            )
+                            
+                            if success:
+                                created_sheets[cluster_name] = sheet_name
+                                logger.info(f"Successfully exported {cluster_name} with rich formatting to sheet: {sheet_name}")
+                                continue  # Move to next cluster
+                            else:
+                                logger.warning(f"Rich format write failed for {cluster_name}, falling back to simple format")
+                                use_rich_format = False  # Fall back to simple format
+                        else:
+                            logger.warning(f"Sample file not found for {cluster_name}, using simple format")
+                            use_rich_format = False
+                            
+                    except Exception as e:
+                        logger.warning(f"Rich formatting failed: {e}, falling back to simple format")
+                        use_rich_format = False
                 
-                # Apply formatting
-                self.format_results_sheet(
-                    spreadsheet_id, sheet_name, [headers] + formatted_data
-                )
-                
-                created_sheets[cluster_name] = sheet_name
+                if not use_rich_format:
+                    # Fall back to simple format
+                    formatted_scores = []
+                    actual_scores = []
+                    
+                    for result in cluster_results:
+                        # Extract reasoning from comparisons if available
+                        reasoning = ""
+                        comparisons = result.get('comparisons', [])
+                        if comparisons:
+                            # Get reasoning from first comparison or aggregate
+                            reasoning_parts = []
+                            for comp in comparisons[:3]:  # Just show first 3 for brevity
+                                if isinstance(comp, dict):
+                                    if 'comparison' in comp and isinstance(comp['comparison'], dict):
+                                        if 'reasoning' in comp['comparison']:
+                                            reasoning_parts.append(comp['comparison']['reasoning'])
+                                    elif 'reasoning' in comp:
+                                        reasoning_parts.append(comp['reasoning'])
+                            reasoning = " | ".join(reasoning_parts) if reasoning_parts else "No reasoning provided"
+                        
+                        formatted_score = {
+                            'essay_id': result.get('essay_id', ''),
+                            'total_score': result.get('predicted_score', 0),
+                            'predicted_score': result.get('predicted_score', 0),
+                            'actual_score': result.get('actual_score', 0),
+                            'strategy_used': result.get('strategy_used', 'unknown'),
+                            'essay_text': result.get('essay_text', ''),
+                            'comparisons': comparisons,
+                            'reasoning': reasoning,  # Add the reasoning field
+                            'model_used': 'gpt-5-mini'  # Default model
+                        }
+                        
+                        # Add any additional scores if present
+                        if 'all_scores' in result:
+                            formatted_score['all_scores'] = result['all_scores']
+                        
+                        formatted_scores.append(formatted_score)
+                        actual_scores.append(result.get('actual_score', 0))
+                    
+                    success = self.client.write_scores_to_sheet(
+                        scores=formatted_scores,
+                        spreadsheet_id=spreadsheet_id,
+                        worksheet_name=sheet_name,
+                        create_headers=True,
+                        actual_scores=actual_scores
+                    )
+                    
+                    if success:
+                        created_sheets[cluster_name] = sheet_name
+                        logger.info(f"Successfully exported {cluster_name} to sheet: {sheet_name}")
+                    else:
+                        logger.warning(f"Failed to export {cluster_name}")
                 
             except Exception as e:
                 logger.error(f"Failed to export results for cluster {cluster_name}: {e}")

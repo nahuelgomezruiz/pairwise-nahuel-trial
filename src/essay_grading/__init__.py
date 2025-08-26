@@ -7,7 +7,29 @@ This module contains the core essay grading logic including:
 """
 
 from .pairwise_grader import PairwiseGrader
-from .scoring_strategies import ScoringStrategy, OriginalScoringStrategy, OptimizedScoringStrategy
+from .scoring_strategies import (
+    ScoringStrategy, 
+    OriginalScoringStrategy, 
+    OptimizedScoringStrategy,
+    WeightedAverageScoringStrategy,
+    MedianScoringStrategy,
+    EloScoringStrategy,
+    BradleyTerryScoringStrategy,
+    PercentileScoringStrategy,
+    BayesianScoringStrategy
+)
 from .comparison_engine import ComparisonEngine
 
-__all__ = ['PairwiseGrader', 'ScoringStrategy', 'OriginalScoringStrategy', 'OptimizedScoringStrategy', 'ComparisonEngine']
+__all__ = [
+    'PairwiseGrader', 
+    'ComparisonEngine',
+    'ScoringStrategy', 
+    'OriginalScoringStrategy', 
+    'OptimizedScoringStrategy',
+    'WeightedAverageScoringStrategy',
+    'MedianScoringStrategy',
+    'EloScoringStrategy',
+    'BradleyTerryScoringStrategy',
+    'PercentileScoringStrategy',
+    'BayesianScoringStrategy'
+]

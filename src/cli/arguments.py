@@ -58,8 +58,11 @@ class ArgumentParser:
             '--strategy',
             type=str,
             default='original',
-            choices=['original', 'optimized', 'weighted_average', 'median'],
-            help='Scoring strategy to use'
+            choices=[
+                'original', 'optimized', 'weighted_average', 'median',
+                'elo', 'bradley_terry', 'percentile', 'bayesian'
+            ],
+            help='Scoring strategy to use (original, optimized, elo, bradley_terry, etc.)'
         )
         
         parser.add_argument(

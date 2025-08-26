@@ -8,7 +8,9 @@ from src.data_management import ClusterManager, RubricManager
 from .comparison_engine import ComparisonEngine
 from .scoring_strategies import (
     ScoringStrategy, OriginalScoringStrategy, OptimizedScoringStrategy,
-    WeightedAverageScoringStrategy, MedianScoringStrategy
+    WeightedAverageScoringStrategy, MedianScoringStrategy,
+    EloScoringStrategy, BradleyTerryScoringStrategy,
+    PercentileScoringStrategy, BayesianScoringStrategy
 )
 
 logger = logging.getLogger(__name__)
@@ -33,7 +35,11 @@ class PairwiseGrader:
             'original': OriginalScoringStrategy(),
             'optimized': OptimizedScoringStrategy(),
             'weighted_average': WeightedAverageScoringStrategy(),
-            'median': MedianScoringStrategy()
+            'median': MedianScoringStrategy(),
+            'elo': EloScoringStrategy(),
+            'bradley_terry': BradleyTerryScoringStrategy(),
+            'percentile': PercentileScoringStrategy(),
+            'bayesian': BayesianScoringStrategy()
         }
         self.default_strategy = 'original'
         
@@ -44,7 +50,7 @@ class PairwiseGrader:
         return self.rubric_manager.load_rubric()
     
     def grade_essay(self, essay_text: str, sample_essays: List[Dict], 
-                    rubric: str, strategy: str = None) -> Dict[str, Any]:
+                    rubric: str, cluster_name: str = None, strategy: str = None) -> Dict[str, Any]:
         """Grade a single essay using pairwise comparisons."""
         strategy_name = strategy or self.default_strategy
         scoring_strategy = self.scoring_strategies.get(strategy_name)
@@ -55,7 +61,7 @@ class PairwiseGrader:
         
         # Perform comparisons
         comparisons = self.comparison_engine.parallel_compare_with_samples(
-            essay_text, sample_essays, rubric
+            essay_text, sample_essays, rubric, cluster_name
         )
         
         # Calculate score using selected strategy

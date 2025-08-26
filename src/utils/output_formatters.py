@@ -13,19 +13,28 @@ logger = logging.getLogger(__name__)
 class OutputFormatter:
     """Handles formatting and exporting results in different formats."""
     
-    def __init__(self, format_type: str = 'json', output_dir: str = './output'):
+    def __init__(self, format_type: str = 'json', output_dir: Optional[str] = None):
         """Initialize output formatter."""
         self.format = format_type.lower()
-        self.output_dir = Path(output_dir)
-        # Ensure output goes to a proper subdirectory, not root
-        if self.output_dir == Path('.'):
-            self.output_dir = Path('./output')
-        self.output_dir.mkdir(parents=True, exist_ok=True)
         
         self.supported_formats = ['json', 'csv', 'excel', 'sheets']
         if self.format not in self.supported_formats:
             logger.warning(f"Unsupported format {self.format}, defaulting to json")
             self.format = 'json'
+        
+        # Handle output_dir - it's only needed for non-sheets formats
+        if self.format == 'sheets':
+            # For sheets format, we don't need an output directory
+            self.output_dir = None
+        else:
+            # For file-based formats, we need an output directory
+            if output_dir is None:
+                output_dir = './output'
+            self.output_dir = Path(output_dir)
+            # Ensure output goes to a proper subdirectory, not root
+            if self.output_dir == Path('.'):
+                self.output_dir = Path('./output')
+            self.output_dir.mkdir(parents=True, exist_ok=True)
     
     def export_results(self, results: Dict[str, List[Dict]], 
                       filename_prefix: str = 'grading_results') -> List[str]:
