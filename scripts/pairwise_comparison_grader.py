@@ -747,15 +747,15 @@ def format_sheets_data(results: List[Dict], sample_essays_df: pd.DataFrame,
                 # Check if sample is to the right (sample score > actual score)
                 if sample_score_int > actual_score:
                     to_right_counts[sample_id] += 1
-                    # Check if it was labeled as WORSE (underrated)
-                    if 'WORSE' in comparison_result:
+                    # Sample should be better (higher score), but if labeled as BETTER (test is better), it's underrated
+                    if 'BETTER' in comparison_result and 'WORSE' not in comparison_result:
                         underrated_counts[sample_id] += 1
                 
                 # Check if sample is to the left (sample score < actual score)
                 elif sample_score_int < actual_score:
                     to_left_counts[sample_id] += 1
-                    # Check if it was labeled as BETTER (overrated)
-                    if 'BETTER' in comparison_result and 'WORSE' not in comparison_result:  # Ensure it's BETTER not WORSE
+                    # Sample should be worse (lower score), but if labeled as WORSE (sample is better), it's overrated
+                    if 'WORSE' in comparison_result:
                         overrated_counts[sample_id] += 1
                         
         except (ValueError, IndexError) as e:

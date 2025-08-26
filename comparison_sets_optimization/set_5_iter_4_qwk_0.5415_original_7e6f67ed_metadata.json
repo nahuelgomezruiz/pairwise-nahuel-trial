@@ -1,0 +1,20 @@
+{
+  "set_size": 5,
+  "iteration": 4,
+  "qwk": 0.5414681921381828,
+  "best_method": "original",
+  "essay_ids": [
+    "329e332",
+    "84cf4d5",
+    "9b873c2",
+    "a14214f",
+    "efd7312"
+  ],
+  "score_distribution": {
+    "3": 2,
+    "1": 1,
+    "4": 1,
+    "2": 1
+  },
+  "timestamp": "2025-08-26T11:07:53.172961"
+}

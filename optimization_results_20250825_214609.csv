@@ -1,0 +1,8 @@
+cluster,baseline_qwk,optimized_qwk,improvement
+car_free_cities,0.5985,,
+driverless_cars_policy,0.5862,,
+electoral_college_debate,0.688,,
+emotion_recognition_schools,0.6834,,
+face_on_mars_evidence,0.5025,,
+seagoing_cowboys_program,0.4106,,
+venus_exploration_worthiness,0.6646,0.6826,0.018000000000000016
