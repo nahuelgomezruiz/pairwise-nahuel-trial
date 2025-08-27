@@ -20,10 +20,14 @@ from .scoring_strategies import (
     OGOriginalScoringStrategy
 )
 from .comparison_engine import ComparisonEngine
+from .chemistry_comparison_engine import ChemistryCriteriaComparisonEngine
+from .chemistry_criteria_grader import ChemistryCriteriaGrader
 
 __all__ = [
     'PairwiseGrader', 
     'ComparisonEngine',
+    'ChemistryCriteriaComparisonEngine',
+    'ChemistryCriteriaGrader',
     'ScoringStrategy', 
     'OriginalScoringStrategy', 
     'OptimizedScoringStrategy',

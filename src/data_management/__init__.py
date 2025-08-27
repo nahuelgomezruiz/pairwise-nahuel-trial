@@ -10,5 +10,6 @@ This module handles:
 from .cluster_manager import ClusterManager
 from .rubric_manager import RubricManager
 from .data_loader import DataLoader
+from .chemistry_data_loader import ChemistryDataLoader
 
-__all__ = ['ClusterManager', 'RubricManager', 'DataLoader']
+__all__ = ['ClusterManager', 'RubricManager', 'DataLoader', 'ChemistryDataLoader']
