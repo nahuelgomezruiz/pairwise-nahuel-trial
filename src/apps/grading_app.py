@@ -52,8 +52,13 @@ class GradingApp:
         
     def run_grading(self, cluster_name: Optional[str] = None, limit: int = 10,
                    max_parallel_essays: int = 70, spreadsheet_id: str = None,
-                   strategy: str = 'original') -> Dict[str, List[Dict]]:
-        """Run the complete grading workflow."""
+                   strategy: str = 'original', incremental_upload: bool = True) -> Dict[str, List[Dict]]:
+        """Run the complete grading workflow.
+        
+        Args:
+            incremental_upload: If True and spreadsheet_id is provided, upload each cluster
+                               immediately after grading to avoid 409 errors.
+        """
         
         start_time = time.time()
         
@@ -66,26 +71,80 @@ class GradingApp:
         logger.info(f"Processing {len(clusters_to_process)} clusters: {clusters_to_process}")
         
         # Process clusters
-        if len(clusters_to_process) == 1:
+        if incremental_upload and spreadsheet_id and self.sheets_integration:
+            # Process and upload each cluster immediately to avoid 409 errors
+            results = self._process_clusters_with_incremental_upload(
+                clusters_to_process, limit, strategy, spreadsheet_id
+            )
+        elif len(clusters_to_process) == 1:
             results = self._process_single_cluster(
                 clusters_to_process[0], limit, strategy
             )
+            # Export single cluster results if sheets integration available
+            if spreadsheet_id and self.sheets_integration:
+                self._export_results(results, spreadsheet_id)
         else:
             results = self._process_multiple_clusters(
                 clusters_to_process, limit, max_parallel_essays, strategy
             )
+            # Export all results at once (old behavior)
+            if spreadsheet_id and self.sheets_integration:
+                self._export_results(results, spreadsheet_id)
             
         # Calculate overall metrics
         self._log_results_summary(results)
-        
-        # Export results
-        self._export_results(results, spreadsheet_id)
         
         elapsed_time = time.time() - start_time
         logger.info(f"Grading completed in {elapsed_time:.2f} seconds")
         
         return results
         
+    def _process_clusters_with_incremental_upload(self, clusters: List[str], limit: int,
+                                                 strategy: str, spreadsheet_id: str) -> Dict[str, List[Dict]]:
+        """Process clusters one by one and upload each immediately after grading.
+        
+        This avoids 409 errors when uploading multiple clusters to Google Sheets.
+        """
+        all_results = {}
+        
+        for i, cluster_name in enumerate(clusters, 1):
+            logger.info(f"Processing cluster {i}/{len(clusters)}: {cluster_name}")
+            
+            try:
+                # Process single cluster using flat parallelization
+                cluster_results = self._process_multiple_clusters_flat([cluster_name], limit, strategy)
+                
+                if cluster_results:
+                    all_results.update(cluster_results)
+                    
+                    # Calculate and log cluster metrics
+                    for c_name, c_results in cluster_results.items():
+                        if c_results:
+                            actual_scores = [r['actual_score'] for r in c_results]
+                            predicted_scores = [r['predicted_score'] for r in c_results]
+                            qwk = calculate_qwk(actual_scores, predicted_scores)
+                            logger.info(f"Cluster {c_name}: {len(c_results)} essays, QWK: {qwk:.4f}")
+                    
+                    # Upload this cluster immediately
+                    logger.info(f"Uploading {cluster_name} to Google Sheets...")
+                    try:
+                        self.sheets_integration.export_results(cluster_results, spreadsheet_id)
+                        logger.info(f"Successfully uploaded {cluster_name} to Google Sheets")
+                    except Exception as upload_error:
+                        logger.error(f"Failed to upload {cluster_name} to sheets: {upload_error}")
+                        # Continue processing other clusters even if upload fails
+                        
+                    # Add a small delay between clusters to avoid rate limiting
+                    if i < len(clusters):
+                        import time
+                        time.sleep(2)  # 2 second delay between cluster uploads
+                        
+            except Exception as e:
+                logger.error(f"Failed to process cluster {cluster_name}: {e}")
+                # Continue with other clusters
+                
+        return all_results
+    
     def _process_single_cluster(self, cluster_name: str, limit: int, 
                                strategy: str) -> Dict[str, List[Dict]]:
         """Process a single cluster using optimized flat parallelization."""

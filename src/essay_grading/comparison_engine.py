@@ -51,30 +51,57 @@ class ComparisonEngine:
 {CLUSTER_PROMPTS[cluster_name]}
 """
         
-        prompt = f"""You are a school teacher. Compare these two student essays and determine which is better.  
-        
+        prompt = f"""<TASK>
+Decide which essay (A or B) better fulfills the assignment and demonstrates higher overall writing quality using Adaptive Comparative Judgment principles. Make a forced choice—no ties.
+</TASK>
+
+<RUBRIC>
+Judge holistically, informed by five dimensions (equal weight unless weights are provided in <CONTEXT>):
+1) Ideas & Argument — clarity, relevance, critical engagement with the task.
+2) Use of Source Evidence — accurate, relevant, well-integrated support.
+3) Organization & Coherence — logical structure, focus, progression, transitions.
+4) Language Use — vocabulary appropriateness, sentence variety, style.
+5) Grammar & Mechanics — correctness; errors that impede meaning weigh heavily.
+</RUBRIC>
+
+<CONTEXT>
 {prompt_context}
+</CONTEXT>
 
-ESSAY A:
+<ESSAY_A>
 {essay1}
+</ESSAY_A>
 
-ESSAY B:
+<ESSAY_B>
 {essay2}
+</ESSAY_B>
 
-RUBRIC:
-{rubric}
+<DECISION_RULES>
+1) Privately assign each essay an internal 0–4 ordinal on each dimension; pick the winner by total.
+2) If totals tie, apply this priority order: Ideas & Argument > Evidence > Organization > Language > Mechanics.
+3) Use only information in <CONTEXT> and the essays. Do not import outside facts.
+4) Mitigate position/length bias: evaluate each essay independently before comparing; do not reward length beyond clarity and support.
+5) If both are off-task, select the less off-task response and state why.
+6) Keep the rationale concise (≤60 words), criterion-grounded, with no quotes or new facts.
+</DECISION_RULES>
 
-Return a JSON object with:
+<OUTPUT_JSON_SCHEMA>
 {{
-    "reasoning": "Brief explanation of which essay better fulfills the assignment and demonstrates higher quality",
-    "winner": "A" or "B"
+  "winner": "A" | "B",
+  "reasoning": "≤60 words explaining the decisive criteria",
+  "criterion_votes": {{
+    "ideas_argument": "A" | "B" | "tie",
+    "evidence": "A" | "B" | "tie",
+    "organization": "A" | "B" | "tie",
+    "language": "A" | "B" | "tie",
+    "mechanics": "A" | "B" | "tie"
+  }}
 }}
+</OUTPUT_JSON_SCHEMA>
 
-Where:
-- "A" means Essay A is better than Essay B
-- "B" means Essay B is better than Essay A
-
-Respond ONLY with the JSON object, no additional text."""
+<RESPONSE_CONSTRAINTS>
+Respond ONLY with valid JSON per the schema. No markdown or extra text.
+</RESPONSE_CONSTRAINTS>"""
         return prompt
     
     def _traced_create_comparison_prompt(self, essay1: str, essay2: str, rubric: str, cluster_name: str = None) -> str:

@@ -14,6 +14,10 @@ except ImportError:
     
 logger = logging.getLogger(__name__)
 
+# System prompt used across all AI providers for consistency
+# To change the role/context for all providers, modify this single constant
+SYSTEM_PROMPT = "You are an expert essay grader."
+
 
 class AIProvider(Enum):
     """Supported AI providers."""
@@ -114,7 +118,7 @@ class OpenAIClient(BaseAIClient):
             request_params = {
                 "model": self.model,
                 "messages": [
-                    {"role": "system", "content": "You are an expert essay grader. Provide detailed, fair assessments based on the given rubric."},
+                    {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": prompt}
                 ]
             }
@@ -157,20 +161,19 @@ class AnthropicClient(BaseAIClient):
         try:
             import anthropic
             self.anthropic = anthropic
-            self.client = anthropic.Anthropic(api_key=self.api_key)
+            client = anthropic.Anthropic(api_key=self.api_key)
+            
+            # Wrap with LangSmith if available
+            if tracer:
+                self.client = tracer.wrap_anthropic_client(client)
+            else:
+                self.client = client
+                
         except ImportError:
             raise ImportError("Please install anthropic: pip install anthropic")
             
     def complete(self, prompt: str, temperature: float = 0.3, max_tokens: int = 4000, **kwargs) -> str:
         """Make a completion request to Anthropic."""
-        # Apply tracing decorator if available
-        if tracer:
-            return self._traced_complete(prompt, temperature, max_tokens, **kwargs)
-        else:
-            return self._raw_complete(prompt, temperature, max_tokens, **kwargs)
-    
-    def _raw_complete(self, prompt: str, temperature: float = 0.3, max_tokens: int = 4000, **kwargs) -> str:
-        """Raw completion request without tracing."""
         try:
             # For rubric parsing and prompt generation, use Opus
             if "extract" in prompt.lower() or "generate" in prompt.lower():
@@ -181,6 +184,7 @@ class AnthropicClient(BaseAIClient):
                 
             response = self.client.messages.create(
                 model=model_to_use,
+                system=SYSTEM_PROMPT,
                 messages=[
                     {"role": "user", "content": prompt}
                 ],
@@ -192,12 +196,6 @@ class AnthropicClient(BaseAIClient):
         except Exception as e:
             logger.error(f"Anthropic API error: {e}")
             raise
-    
-    def _traced_complete(self, prompt: str, temperature: float = 0.3, max_tokens: int = 4000, **kwargs) -> str:
-        """Traced completion request."""
-        # Wrap with tracing decorator
-        traced_func = tracer.trace_complete_call("Anthropic", self.model)(self._raw_complete)
-        return traced_func(prompt, temperature, max_tokens, **kwargs)
 
 
 class GeminiClient(BaseAIClient):
@@ -215,24 +213,38 @@ class GeminiClient(BaseAIClient):
             import google.generativeai as genai
             self.genai = genai
             genai.configure(api_key=self.api_key)
-            self.model_instance = genai.GenerativeModel(model)
+            self.model_instance = genai.GenerativeModel(
+                model,
+                system_instruction=SYSTEM_PROMPT
+            )
+            
+            # Apply tracing decorator if available
+            if tracer:
+                self._complete_impl = tracer.trace_llm_call("Gemini", model)(self._raw_complete)
+            else:
+                self._complete_impl = self._raw_complete
+                
         except ImportError:
             raise ImportError("Please install google-generativeai: pip install google-generativeai")
             
     def complete(self, prompt: str, temperature: float = 0.3, **kwargs) -> str:
         """Make a completion request to Gemini."""
-        # Apply tracing decorator if available
-        if tracer:
-            return self._traced_complete(prompt, temperature, **kwargs)
-        else:
-            return self._raw_complete(prompt, temperature, **kwargs)
+        return self._complete_impl(prompt, temperature, **kwargs)
     
     def _raw_complete(self, prompt: str, temperature: float = 0.3, **kwargs) -> str:
-        """Raw completion request without tracing."""
+        """Raw completion request."""
         try:
+            # Convert common parameters to Gemini's expected format
+            gemini_kwargs = {}
+            for key, value in kwargs.items():
+                if key == "max_tokens":
+                    gemini_kwargs["max_output_tokens"] = value
+                else:
+                    gemini_kwargs[key] = value
+            
             generation_config = self.genai.GenerationConfig(
                 temperature=temperature,
-                **kwargs
+                **gemini_kwargs
             )
             
             response = self.model_instance.generate_content(
@@ -243,12 +255,6 @@ class GeminiClient(BaseAIClient):
         except Exception as e:
             logger.error(f"Gemini API error: {e}")
             raise
-    
-    def _traced_complete(self, prompt: str, temperature: float = 0.3, **kwargs) -> str:
-        """Traced completion request."""
-        # Wrap with tracing decorator
-        traced_func = tracer.trace_complete_call("Gemini", self.model)(self._raw_complete)
-        return traced_func(prompt, temperature, **kwargs)
 
 
 class AIClientFactory:
@@ -281,11 +287,15 @@ class AIClientFactory:
         "opus": "claude-3-opus-20240229",
         "sonnet": "claude-3-5-sonnet-20241022",
         "haiku": "claude-3-haiku-20240307",
+        "claude-sonnet-4": "claude-sonnet-4-20250514",
+        "sonnet-4": "claude-sonnet-4-20250514",
         
         # Gemini aliases
         "gemini": "gemini-1.5-flash",
         "gemini-pro": "gemini-1.5-pro",
-        "gemini-flash": "gemini-1.5-flash"
+        "gemini-flash": "gemini-1.5-flash",
+        "gemini-2.5-pro": "gemini-2.5-pro",
+        "gemini-2.5-flash": "gemini-2.5-flash"
     }
     
     @classmethod

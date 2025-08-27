@@ -94,12 +94,19 @@ class LangSmithTracer:
             return self.wrapped_clients[client_id]
             
         try:
-            # Anthropic requires manual instrumentation with traceable decorator
-            # We'll handle this differently in the complete method
-            logger.debug("Anthropic client prepared for LangSmith tracing")
-            return client
+            # Check if wrap_anthropic is available in langsmith.wrappers
+            try:
+                from langsmith.wrappers import wrap_anthropic
+                wrapped = wrap_anthropic(client)
+                self.wrapped_clients[client_id] = wrapped
+                logger.debug("Anthropic client wrapped with LangSmith tracing using wrap_anthropic")
+                return wrapped
+            except ImportError:
+                # Fall back to manual instrumentation if wrap_anthropic is not available
+                logger.debug("wrap_anthropic not available, using manual tracing for Anthropic client")
+                return client
         except Exception as e:
-            logger.warning(f"Failed to prepare Anthropic client for tracing: {e}")
+            logger.warning(f"Failed to wrap Anthropic client: {e}")
             return client
     
     def wrap_gemini_client(self, client):
@@ -172,6 +179,48 @@ class LangSmithTracer:
                 return wrapper
             except Exception as e:
                 logger.warning(f"Failed to add tracing to {provider} complete call: {e}")
+                return func
+        
+        return decorator
+    
+    def trace_llm_call(self, provider: str, model: str):
+        """Decorator to trace LLM calls with proper inputs/outputs logging."""
+        def decorator(func):
+            if not self.enabled:
+                return func
+                
+            try:
+                from langsmith import traceable
+                
+                @wraps(func)
+                @traceable(
+                    name=f"{provider}_{model}",
+                    run_type="llm",
+                    tags=[provider.lower(), "llm", model],
+                    metadata={
+                        "provider": provider, 
+                        "model": model,
+                        "llm_provider": provider.lower()
+                    }
+                )
+                def wrapper(prompt: str, temperature: float = 0.3, **kwargs):
+                    # Log the inputs
+                    inputs = {
+                        "prompt": prompt,
+                        "temperature": temperature,
+                        "model": model,
+                        **kwargs
+                    }
+                    
+                    # Execute the actual call
+                    result = func(prompt, temperature, **kwargs)
+                    
+                    # The traceable decorator will handle logging
+                    return result
+                
+                return wrapper
+            except Exception as e:
+                logger.warning(f"Failed to add tracing to {provider} LLM call: {e}")
                 return func
         
         return decorator

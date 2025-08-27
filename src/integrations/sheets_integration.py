@@ -118,71 +118,16 @@ class SheetsIntegration:
                             if success:
                                 created_sheets[cluster_name] = sheet_name
                                 logger.info(f"Successfully exported {cluster_name} with rich formatting to sheet: {sheet_name}")
-                                continue  # Move to next cluster
                             else:
-                                logger.warning(f"Rich format write failed for {cluster_name}, falling back to simple format")
-                                use_rich_format = False  # Fall back to simple format
+                                logger.error(f"Rich format write failed for {cluster_name}")
+                                raise Exception(f"Failed to write {cluster_name} to Google Sheets")
                         else:
-                            logger.warning(f"Sample file not found for {cluster_name}, using simple format")
-                            use_rich_format = False
+                            logger.error(f"Sample file not found for {cluster_name}")
+                            raise Exception(f"Sample file required for {cluster_name} but not found")
                             
                     except Exception as e:
-                        logger.warning(f"Rich formatting failed: {e}, falling back to simple format")
-                        use_rich_format = False
-                
-                if not use_rich_format:
-                    # Fall back to simple format
-                    formatted_scores = []
-                    actual_scores = []
-                    
-                    for result in cluster_results:
-                        # Extract reasoning from comparisons if available
-                        reasoning = ""
-                        comparisons = result.get('comparisons', [])
-                        if comparisons:
-                            # Get reasoning from first comparison or aggregate
-                            reasoning_parts = []
-                            for comp in comparisons[:3]:  # Just show first 3 for brevity
-                                if isinstance(comp, dict):
-                                    if 'comparison' in comp and isinstance(comp['comparison'], dict):
-                                        if 'reasoning' in comp['comparison']:
-                                            reasoning_parts.append(comp['comparison']['reasoning'])
-                                    elif 'reasoning' in comp:
-                                        reasoning_parts.append(comp['reasoning'])
-                            reasoning = " | ".join(reasoning_parts) if reasoning_parts else "No reasoning provided"
-                        
-                        formatted_score = {
-                            'essay_id': result.get('essay_id', ''),
-                            'total_score': result.get('predicted_score', 0),
-                            'predicted_score': result.get('predicted_score', 0),
-                            'actual_score': result.get('actual_score', 0),
-                            'strategy_used': result.get('strategy_used', 'unknown'),
-                            'essay_text': result.get('essay_text', ''),
-                            'comparisons': comparisons,
-                            'reasoning': reasoning,  # Add the reasoning field
-                            'model_used': 'gpt-5-mini'  # Default model
-                        }
-                        
-                        # Add any additional scores if present
-                        if 'all_scores' in result:
-                            formatted_score['all_scores'] = result['all_scores']
-                        
-                        formatted_scores.append(formatted_score)
-                        actual_scores.append(result.get('actual_score', 0))
-                    
-                    success = self.client.write_scores_to_sheet(
-                        scores=formatted_scores,
-                        spreadsheet_id=spreadsheet_id,
-                        worksheet_name=sheet_name,
-                        create_headers=True,
-                        actual_scores=actual_scores
-                    )
-                    
-                    if success:
-                        created_sheets[cluster_name] = sheet_name
-                        logger.info(f"Successfully exported {cluster_name} to sheet: {sheet_name}")
-                    else:
-                        logger.warning(f"Failed to export {cluster_name}")
+                        logger.error(f"Rich formatting failed: {e}")
+                        raise  # Re-raise the exception instead of falling back
                 
             except Exception as e:
                 logger.error(f"Failed to export results for cluster {cluster_name}: {e}")

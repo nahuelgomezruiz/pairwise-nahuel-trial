@@ -225,7 +225,7 @@ class MedianScoringStrategy(ScoringStrategy):
 class EloScoringStrategy(ScoringStrategy):
     """ELO rating-based scoring strategy."""
     
-    def __init__(self, k_factor: float = 32, initial_rating: float = 1500):
+    def __init__(self, k_factor: float = 32, initial_rating: float = 1000):
         """Initialize with ELO parameters."""
         self.k_factor = k_factor
         self.initial_rating = initial_rating
