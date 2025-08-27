@@ -122,7 +122,10 @@ Respond ONLY with valid JSON per the schema. No markdown or extra text.
         
         try:
             response = self.ai_client.complete(prompt)
-            result = json.loads(response)
+            
+            # Clean response for different AI providers
+            cleaned_response = self._clean_json_response(response)
+            result = json.loads(cleaned_response)
             
             # Validate response structure
             required_keys = ['reasoning', 'winner']
@@ -134,10 +137,44 @@ Respond ONLY with valid JSON per the schema. No markdown or extra text.
             
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse comparison response: {e}")
+            logger.debug(f"Raw response: {response[:200]}...")
             return self._create_fallback_result()
         except Exception as e:
             logger.error(f"Error in essay comparison: {e}")
             return self._create_fallback_result()
+    
+    def _clean_json_response(self, response: str) -> str:
+        """Clean AI response to extract valid JSON."""
+        if not response or not response.strip():
+            raise json.JSONDecodeError("Empty response", response, 0)
+        
+        # Remove markdown code blocks (common with Gemini)
+        cleaned = response.strip()
+        
+        # Remove ```json and ``` markers
+        if cleaned.startswith('```json'):
+            cleaned = cleaned[7:]  # Remove ```json
+        elif cleaned.startswith('```'):
+            cleaned = cleaned[3:]   # Remove ```
+            
+        if cleaned.endswith('```'):
+            cleaned = cleaned[:-3]  # Remove closing ```
+        
+        # Remove any leading/trailing whitespace
+        cleaned = cleaned.strip()
+        
+        # Handle case where response starts with explanation before JSON
+        # Look for the first { and take everything from there
+        start_idx = cleaned.find('{')
+        if start_idx != -1:
+            cleaned = cleaned[start_idx:]
+        
+        # Find the last } to handle cases where there's text after JSON
+        end_idx = cleaned.rfind('}')
+        if end_idx != -1:
+            cleaned = cleaned[:end_idx + 1]
+        
+        return cleaned
     
     def _create_fallback_result(self) -> Dict[str, Any]:
         """Create a fallback result when comparison fails."""
