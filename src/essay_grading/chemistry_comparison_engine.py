@@ -96,6 +96,13 @@ Respond ONLY with valid JSON. No markdown, no extra text."""
                 logger.warning(f"Incomplete comparison result for criterion {criterion_number}: {result}")
                 return self._create_fallback_result()
             
+            # Validate band predictions are present
+            if 'report_a_band' not in result or 'report_b_band' not in result:
+                logger.warning(f"Missing band predictions in response for criterion {criterion_number}: {result}")
+                # Add missing band predictions with defaults
+                result['report_a_band'] = result.get('report_a_band', '3-4')
+                result['report_b_band'] = result.get('report_b_band', '3-4')
+            
             # Add criterion number to result
             result['criterion_number'] = criterion_number
             
@@ -170,6 +177,11 @@ Respond ONLY with valid JSON. No markdown, no extra text."""
                         'sample_id': sample['student_id'],
                         'sample_score': sample['criterion_score'],
                         'sample_score_band': sample['score_band'],
+                        'sample_band_index': sample.get('band_index'),
+                        'predicted_sample_band': sample['score_band'],  # Use sample's actual band
+                        'predicted_test_band': '3-4',  # Default test band prediction
+                        'report_a_band': sample['score_band'],  # Sample band
+                        'report_b_band': '3-4',  # Test band
                         'error': str(e)
                     })
         
@@ -204,5 +216,7 @@ Respond ONLY with valid JSON. No markdown, no extra text."""
         return {
             'winner': 'A',
             'reasoning': 'Comparison failed - defaulting to sample',
+            'report_a_band': '3-4',  # Default sample band
+            'report_b_band': '3-4',  # Default test band
             'error': True
         }

@@ -228,7 +228,12 @@ class ChemistryCriteriaGrader:
                 'sample_id': comp.get('sample_id', ''),
                 'sample_score_band': comp.get('sample_score_band', ''),
                 'sample_band_index': comp.get('sample_band_index'),
-                'criterion_number': comp.get('criterion_number', 0)
+                'criterion_number': comp.get('criterion_number', 0),
+                # Preserve model band predictions so strategies like majority_vote can use them
+                'predicted_sample_band': comp.get('predicted_sample_band') or comp.get('report_a_band'),
+                'predicted_test_band': comp.get('predicted_test_band') or comp.get('report_b_band'),
+                'report_a_band': comp.get('report_a_band'),
+                'report_b_band': comp.get('report_b_band')
             }
             
             adjusted.append(adjusted_comp)

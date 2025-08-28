@@ -237,7 +237,7 @@ def create_parser() -> argparse.ArgumentParser:
         '--strategy',
         type=str,
         default='original',
-        choices=['original', 'optimized', 'og_original', 'elo'],
+        choices=['original', 'optimized', 'og_original', 'elo', 'majority_vote'],
         help='Scoring strategy to use'
     )
     
