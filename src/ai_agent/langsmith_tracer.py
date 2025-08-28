@@ -266,5 +266,26 @@ class LangSmithTracer:
             logger.warning(f"Failed to log comparison result: {e}")
 
 
-# Global tracer instance
-tracer = LangSmithTracer()
+# Global tracer instance (lazy initialization)
+_tracer_instance = None
+
+def get_tracer():
+    """Get or create the global LangSmith tracer instance (lazy initialization)."""
+    global _tracer_instance
+    if _tracer_instance is None:
+        _tracer_instance = LangSmithTracer()
+    return _tracer_instance
+
+class LazyTracer:
+    """Lazy wrapper for LangSmith tracer that only initializes when actually used."""
+    
+    def __getattr__(self, name):
+        """Delegate all attribute access to the actual tracer (creating it if needed)."""
+        return getattr(get_tracer(), name)
+    
+    def __bool__(self):
+        """Check if tracing would be enabled without initializing."""
+        return bool(LANGSMITH_TRACING and LANGSMITH_API_KEY)
+
+# Use lazy wrapper instead of immediate initialization
+tracer = LazyTracer()

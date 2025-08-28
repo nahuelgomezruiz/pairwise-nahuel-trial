@@ -8,7 +8,9 @@ from pathlib import Path
 
 from src.essay_grading.chemistry_criteria_grader import ChemistryCriteriaGrader
 from src.integrations.chemistry_sheets_integration import ChemistrySheetsIntegration
-from src.utils.metrics import calculate_qwk
+# Removed QWK calculation - using miss distribution instead
+from sklearn.metrics import cohen_kappa_score
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -38,24 +40,25 @@ class ChemistryGradingApp:
     def run_criterion_grading(self, 
                             criterion_number: int,
                             limit: Optional[int] = None,
-                            strategy: str = 'original',
-                            spreadsheet_id: str = None) -> Dict[str, Any]:
+                            strategy: str = 'band',
+                            spreadsheet_id: str = None,
+                            max_parallel_reports: int = 10) -> Dict[str, Any]:
         """Run grading for a single criterion."""
         
         start_time = time.time()
         logger.info(f"Starting grading for Criterion {criterion_number}")
         
-        # Grade the criterion
+        # Grade the criterion with parallel processing
         results, predicted_scores, actual_scores = self.grader.grade_criterion(
-            criterion_number, limit, strategy
+            criterion_number, limit, strategy, max_parallel_reports
         )
         
         if not results:
             logger.error(f"No results obtained for Criterion {criterion_number}")
             return {}
         
-        # Calculate metrics
-        qwk = calculate_qwk(actual_scores, predicted_scores)
+        # Calculate distribution of prediction accuracy (bands away from actual)
+        miss_distribution = self._calculate_miss_distribution(results)
         
         # Package results
         criterion_results = {
@@ -63,8 +66,9 @@ class ChemistryGradingApp:
             'results': results,
             'predicted_scores': predicted_scores,
             'actual_scores': actual_scores,
-            'qwk': qwk,
+            'miss_distribution': miss_distribution,
             'strategy': strategy,
+            'model': self.model,
             'timestamp': datetime.now().isoformat()
         }
         
@@ -75,7 +79,11 @@ class ChemistryGradingApp:
             self._export_criterion_to_csv(criterion_results)
         
         elapsed_time = time.time() - start_time
-        logger.info(f"Criterion {criterion_number} grading completed in {elapsed_time:.2f} seconds. QWK: {qwk:.3f}")
+        
+        # Log distribution of misses for primary method
+        primary_dist = miss_distribution.get('primary', {})
+        dist_str = ', '.join([f"{d}: {c}" for d, c in sorted(primary_dist.items())])
+        logger.info(f"Criterion {criterion_number} grading completed in {elapsed_time:.2f} seconds. Primary Distribution: {dist_str}")
         
         return criterion_results
     
@@ -113,18 +121,36 @@ class ChemistryGradingApp:
                 }
         
         # Calculate overall statistics
-        total_qwk_sum = 0
         valid_criteria = 0
-        for criterion_num, results in all_results.items():
-            if 'qwk' in results:
-                total_qwk_sum += results['qwk']
-                valid_criteria += 1
+        total_distributions = {'original': {0: 0, 1: 0, 2: 0, 3: 0}, 
+                              'og_original': {0: 0, 1: 0, 2: 0, 3: 0},
+                              'majority_vote': {0: 0, 1: 0, 2: 0, 3: 0},
+                              'primary': {0: 0, 1: 0, 2: 0, 3: 0}}
         
-        avg_qwk = total_qwk_sum / valid_criteria if valid_criteria > 0 else 0
+        for criterion_num, results in all_results.items():
+            if 'miss_distribution' in results:
+                valid_criteria += 1
+                criterion_dists = results['miss_distribution']
+                
+                # Aggregate distributions across all criteria
+                for method in ['original', 'og_original', 'majority_vote', 'primary']:
+                    if method in criterion_dists:
+                        for distance, count in criterion_dists[method].items():
+                            total_distributions[method][distance] += count
         
         elapsed_time = time.time() - start_time
         logger.info(f"All criteria grading completed in {elapsed_time:.2f} seconds")
-        logger.info(f"Average QWK across {valid_criteria} criteria: {avg_qwk:.3f}")
+        logger.info(f"Successfully graded {valid_criteria} criteria")
+        
+        # Log overall distributions
+        for method in ['original', 'og_original', 'majority_vote', 'primary']:
+            dist_str = ', '.join([f"{d}: {c}" for d, c in sorted(total_distributions[method].items())])
+            method_name = method.replace('_', ' ').title()
+            logger.info(f"Overall {method_name} Distribution: {dist_str}")
+        
+        # Create and export overall summary table if sheets integration is available
+        if spreadsheet_id and self.sheets_integration and valid_criteria > 1:
+            self._export_overall_summary_to_sheets(total_distributions, valid_criteria, spreadsheet_id)
         
         return all_results
     
@@ -138,6 +164,26 @@ class ChemistryGradingApp:
         except Exception as e:
             logger.error(f"Failed to export to sheets: {e}")
     
+    def _export_overall_summary_to_sheets(self, total_distributions: Dict[str, Dict[int, int]], 
+                                         valid_criteria: int, spreadsheet_id: str):
+        """Export overall summary of distributions across all criteria to Google Sheets."""
+        try:
+            # Create summary data structure
+            summary_data = {
+                'total_distributions': total_distributions,
+                'valid_criteria': valid_criteria,
+                'model': self.model,
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            sheet_name = self.sheets_integration.export_overall_summary(
+                summary_data, spreadsheet_id
+            )
+            logger.info(f"Exported overall summary to sheet: {sheet_name}")
+        except Exception as e:
+            logger.error(f"Failed to export overall summary to sheets: {e}")
+            # Don't raise exception here - overall summary is optional
+    
     def _export_criterion_to_csv(self, criterion_results: Dict[str, Any]):
         """Export criterion results to CSV file."""
         import pandas as pd
@@ -149,23 +195,54 @@ class ChemistryGradingApp:
             # Create dataframe from results
             data = []
             for result in criterion_results['results']:
-                data.append({
+                all_scores = result.get('all_scores', {})
+                
+                # Convert scores to predicted bands for each method
+                original_score = all_scores.get('original', {}).get('score', '-')
+                original_pred_band = self.grader.data_loader.convert_numeric_score_to_band(original_score) if isinstance(original_score, (int, float)) else '-'
+                
+                og_original_score = all_scores.get('og_original', {}).get('score', '-')
+                og_original_pred_band = self.grader.data_loader.convert_numeric_score_to_band(og_original_score) if isinstance(og_original_score, (int, float)) else '-'
+                
+                elo_score = all_scores.get('elo', {}).get('score', '-')
+                elo_pred_band = self.grader.data_loader.convert_numeric_score_to_band(elo_score) if isinstance(elo_score, (int, float)) else '-'
+                
+                optimized_score = all_scores.get('optimized', {}).get('score', '-')
+                optimized_pred_band = self.grader.data_loader.convert_numeric_score_to_band(optimized_score) if isinstance(optimized_score, (int, float)) else '-'
+                
+                majority_vote_score = all_scores.get('majority_vote', {}).get('score', '-')
+                majority_vote_pred_band = self.grader.data_loader.convert_numeric_score_to_band(majority_vote_score) if isinstance(majority_vote_score, (int, float)) else '-'
+                
+                data_row = {
                     'student_id': result['student_id'],
-                    'actual_score': result['actual_score'],
-                    'predicted_score': result['predicted_score'],
                     'actual_band': result.get('actual_score_band', ''),
+                    'actual_band_index': result.get('actual_band_index', ''),
+                    'predicted_band': result.get('predicted_band', ''),
+                    'predicted_band_index': result.get('predicted_band_index', ''),
+                    'original_score': all_scores.get('original', {}).get('score', '-'),
+                    'original_pred_band': original_pred_band,
+                    'og_original_score': all_scores.get('og_original', {}).get('score', '-'),
+                    'og_original_pred_band': og_original_pred_band,
+                    'elo_score': all_scores.get('elo', {}).get('score', '-'),
+                    'elo_pred_band': elo_pred_band,
+                    'optimized_score': all_scores.get('optimized', {}).get('score', '-'),
+                    'optimized_pred_band': optimized_pred_band,
+                    'majority_vote_score': all_scores.get('majority_vote', {}).get('score', '-'),
+                    'majority_vote_pred_band': majority_vote_pred_band,
+                    'actual_score': result['actual_score'],
+                    'primary_score': result['predicted_score'],
                     'strategy': result['strategy_used'],
                     'num_comparisons': len(result['comparisons'])
-                })
+                }
+                data.append(data_row)
             
             df = pd.DataFrame(data)
             
-            # Add QWK to the filename
-            qwk = criterion_results.get('qwk', 0)
+            # Add timestamp to the filename
             criterion_num = criterion_results['criterion_number']
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             
-            filename = f"criterion_{criterion_num}_qwk{qwk:.3f}_{timestamp}.csv"
+            filename = f"criterion_{criterion_num}_{timestamp}.csv"
             filepath = self.output_dir / filename
             
             df.to_csv(filepath, index=False)
@@ -173,3 +250,39 @@ class ChemistryGradingApp:
             
         except Exception as e:
             logger.error(f"Failed to export to CSV: {e}")
+    
+    def _calculate_miss_distribution(self, results: List[Dict]) -> Dict[str, Dict[int, int]]:
+        """Calculate distribution of prediction accuracy for all scoring methods."""
+        from src.data_management.chemistry_data_loader import ChemistryDataLoader
+        data_loader = ChemistryDataLoader('src/data')
+        
+        # Initialize distributions for all methods
+        methods = ['original', 'og_original', 'majority_vote', 'primary']
+        distributions = {}
+        
+        for method in methods:
+            distributions[method] = {0: 0, 1: 0, 2: 0, 3: 0}
+        
+        for result in results:
+            actual_band_idx = result.get('actual_band_index', 2)
+            all_scores = result.get('all_scores', {})
+            
+            # Calculate distribution for each scoring method
+            for method in ['original', 'og_original', 'majority_vote']:
+                if method in all_scores:
+                    method_score = all_scores[method].get('score', 3.5)
+                    predicted_band_idx = data_loader.convert_numeric_score_to_band_index(method_score)
+                else:
+                    predicted_band_idx = 2  # Default to middle band
+                
+                distance = abs(predicted_band_idx - actual_band_idx)
+                if distance in distributions[method]:
+                    distributions[method][distance] += 1
+            
+            # Also calculate for primary prediction (from the primary strategy)
+            predicted_band_idx = result.get('predicted_band_index', 2)
+            distance = abs(predicted_band_idx - actual_band_idx)
+            if distance in distributions['primary']:
+                distributions['primary'][distance] += 1
+        
+        return distributions

@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 # System prompt used across all AI providers for consistency
 # To change the role/context for all providers, modify this single constant
-SYSTEM_PROMPT = "You are an expert essay grader."
+SYSTEM_PROMPT = "You are an expert scientific report grader."
 
 
 class AIProvider(Enum):
@@ -251,7 +251,40 @@ class GeminiClient(BaseAIClient):
                 prompt,
                 generation_config=generation_config
             )
+            
+            # Check if response has valid candidates
+            if not response.candidates:
+                raise ValueError("Gemini response contains no candidates")
+            
+            candidate = response.candidates[0]
+            
+            # Check finish reason
+            if hasattr(candidate, 'finish_reason'):
+                finish_reason = candidate.finish_reason
+                if finish_reason == 2:  # SAFETY
+                    raise ValueError("Content blocked by Gemini safety filter. Try rephrasing or use a different model.")
+                elif finish_reason == 3:  # RECITATION
+                    raise ValueError("Content blocked by Gemini recitation filter.")
+                elif finish_reason == 4:  # OTHER
+                    raise ValueError("Content blocked by Gemini for other reasons.")
+                elif finish_reason not in [0, 1]:  # 0=UNSPECIFIED, 1=STOP (normal completion)
+                    raise ValueError(f"Gemini request incomplete (finish_reason: {finish_reason})")
+            
+            # Check if response has valid text content
+            if not hasattr(response, 'text') or not response.text:
+                if candidate.content and candidate.content.parts:
+                    # Try to extract text from parts
+                    text_parts = []
+                    for part in candidate.content.parts:
+                        if hasattr(part, 'text') and part.text:
+                            text_parts.append(part.text)
+                    if text_parts:
+                        return ''.join(text_parts)
+                
+                raise ValueError("Gemini response contains no valid text content")
+            
             return response.text
+            
         except Exception as e:
             logger.error(f"Gemini API error: {e}")
             raise
@@ -266,7 +299,7 @@ class AIClientFactory:
 
     # Default models for each provider
     DEFAULT_MODELS = {
-        AIProvider.OPENAI: "gpt-4o-mini",
+        AIProvider.OPENAI: "gpt-5-mini",
         AIProvider.ANTHROPIC: "claude-3-5-sonnet-20241022",
         AIProvider.GEMINI: "gemini-1.5-flash"
     }
@@ -278,6 +311,7 @@ class AIClientFactory:
         "gpt4-mini": "gpt-4o-mini",
         "gpt-4": "gpt-4o",
         "gpt-3.5": "gpt-3.5-turbo",
+        "gpt5-mini": "gpt-5-mini",
         
         # Anthropic aliases  
         "claude": "claude-3-5-sonnet-20241022",
@@ -305,7 +339,7 @@ class AIClientFactory:
         
         Args:
             model_spec: Model specification string. Can be:
-                       - None: Use default (OpenAI GPT-4o-mini)
+                       - None: Use default (OpenAI GPT-5-mini)
                        - Provider name: "openai", "anthropic", "gemini"
                        - Model name: "gpt-4", "claude-opus", "gemini-pro", etc.
                        - Full spec: "openai:gpt-4", "anthropic:claude-opus", etc.

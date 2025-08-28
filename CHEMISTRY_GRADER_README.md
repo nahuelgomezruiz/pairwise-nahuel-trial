@@ -79,7 +79,7 @@ python scripts/chemistry_criteria_grader.py --no-sheets
 | `--criteria` | Criteria to grade (e.g., "1,2,3" or "1-5" or "1-12") | All criteria (1-12) |
 | `--limit` | Number of test reports to grade | All available |
 | `--model` | AI model for comparisons | openai:gpt-5-mini |
-| `--strategy` | Scoring strategy ('original' or 'optimized') | original |
+| `--strategy` | Scoring strategy ('band', 'original', or 'optimized') | band |
 | `--spreadsheet-id` | Google Sheets ID for output | From env var |
 | `--no-sheets` | Skip Google Sheets output | False |
 | `--output-format` | Output format ('sheets' or 'csv') | sheets |
@@ -120,10 +120,12 @@ Each criterion gets its own worksheet with:
 
 Creates one CSV file per criterion containing:
 - Student ID
-- Actual score and score band
-- Predicted score
-- Strategy used
-- Number of comparisons
+- Actual band and band index (0-3)
+- Predicted band and band index (0-3)
+- Confidence level (high/medium/low)
+- Actual and predicted numeric scores
+- Strategy used (band/original/optimized)
+- Number of comparisons performed
 
 ## Criteria Descriptions
 
@@ -144,11 +146,20 @@ The grader evaluates these 12 criteria:
 
 ## Scoring System
 
-Each criterion uses a 4-level rubric:
-- **5-6 points**: Highest level of achievement
-- **3-4 points**: Satisfactory achievement
-- **1-2 points**: Limited achievement
-- **0 points**: Does not satisfy descriptors
+The grader uses a **band-based scoring system** with 4 distinct performance bands:
+
+### Performance Bands
+- **Band 3 (5-6 points)**: Highest level of achievement
+- **Band 2 (3-4 points)**: Satisfactory achievement  
+- **Band 1 (1-2 points)**: Limited achievement
+- **Band 0 (0 points)**: Does not satisfy descriptors
+
+### Band Prediction
+The system predicts which band a report falls into based on pairwise comparisons with sample reports. This approach:
+- Treats each band as a distinct category (0-3)
+- Calculates QWK based on band differences
+- Provides confidence levels for predictions
+- Results in more accurate categorical predictions
 
 ## Implementation Details
 

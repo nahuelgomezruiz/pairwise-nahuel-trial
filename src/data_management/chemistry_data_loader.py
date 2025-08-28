@@ -23,27 +23,34 @@ class ChemistryDataLoader:
         self.grades_file = self.submissions_dir / "grades" / "chemistry_grades.csv"
         self.criteria_file = self.submissions_dir / "criterion" / "QCAA_Chemistry_2019_Criteria_breakdown.csv"
         
+        # PERFORMANCE OPTIMIZATION: Cache loaded data
+        self._grades_cache = None
+        self._criteria_cache = None
+        self._reports_cache = {}
+        
         logger.info(f"Initialized ChemistryDataLoader with submissions dir: {self.submissions_dir}")
     
     def load_grades(self) -> pd.DataFrame:
-        """Load the chemistry grades CSV file."""
-        try:
-            grades_df = pd.read_csv(self.grades_file)
-            logger.info(f"Loaded {len(grades_df)} grade records")
-            return grades_df
-        except Exception as e:
-            logger.error(f"Failed to load grades file: {e}")
-            raise
+        """Load the chemistry grades CSV file (cached)."""
+        if self._grades_cache is None:
+            try:
+                self._grades_cache = pd.read_csv(self.grades_file)
+                logger.info(f"Loaded {len(self._grades_cache)} grade records (cached)")
+            except Exception as e:
+                logger.error(f"Failed to load grades file: {e}")
+                raise
+        return self._grades_cache
     
     def load_criteria_rubric(self) -> pd.DataFrame:
-        """Load the criteria breakdown CSV file."""
-        try:
-            criteria_df = pd.read_csv(self.criteria_file)
-            logger.info(f"Loaded {len(criteria_df)} criteria definitions")
-            return criteria_df
-        except Exception as e:
-            logger.error(f"Failed to load criteria file: {e}")
-            raise
+        """Load the criteria breakdown CSV file (cached)."""
+        if self._criteria_cache is None:
+            try:
+                self._criteria_cache = pd.read_csv(self.criteria_file)
+                logger.info(f"Loaded {len(self._criteria_cache)} criteria definitions (cached)")
+            except Exception as e:
+                logger.error(f"Failed to load criteria file: {e}")
+                raise
+        return self._criteria_cache
     
     def get_criterion_rubric(self, criterion_number: int) -> Dict[str, str]:
         """Get the rubric for a specific criterion."""
@@ -66,7 +73,11 @@ class ChemistryDataLoader:
         return rubric
     
     def load_report(self, student_id: str) -> str:
-        """Load a student's chemistry report text."""
+        """Load a student's chemistry report text (cached)."""
+        # Check cache first
+        if student_id in self._reports_cache:
+            return self._reports_cache[student_id]
+        
         report_path = self.assignments_dir / f"{student_id}.txt"
         
         if not report_path.exists():
@@ -76,11 +87,41 @@ class ChemistryDataLoader:
         try:
             with open(report_path, 'r', encoding='utf-8') as f:
                 content = f.read()
-            logger.debug(f"Loaded report for {student_id}: {len(content)} chars")
+            
+            # Cache the loaded report
+            self._reports_cache[student_id] = content
+            logger.debug(f"Loaded and cached report for {student_id}: {len(content)} chars")
             return content
         except Exception as e:
             logger.error(f"Failed to load report for {student_id}: {e}")
             raise
+    
+    def preload_all_reports(self) -> None:
+        """Batch load all reports for maximum performance."""
+        if self._reports_cache:
+            logger.debug("Reports already cached, skipping preload")
+            return
+        
+        logger.info("Preloading all reports for performance optimization...")
+        report_files = list(self.assignments_dir.glob("*.txt"))
+        
+        for report_path in report_files:
+            student_id = report_path.stem
+            try:
+                with open(report_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                self._reports_cache[student_id] = content
+            except Exception as e:
+                logger.warning(f"Failed to preload report {student_id}: {e}")
+        
+        logger.info(f"Preloaded {len(self._reports_cache)} reports into cache")
+    
+    def clear_cache(self) -> None:
+        """Clear all cached data to free memory."""
+        self._grades_cache = None
+        self._criteria_cache = None
+        self._reports_cache.clear()
+        logger.info("Cleared all cached data")
     
     def get_sample_reports(self, criterion_number: int, sample_count: int = 6) -> List[Dict]:
         """Get the first N sample reports with their grades for a specific criterion."""
@@ -109,7 +150,8 @@ class ChemistryDataLoader:
                     'student_id': student_id,
                     'report_text': report_text,
                     'criterion_score': score,
-                    'score_band': score_str
+                    'score_band': score_str,
+                    'band_index': self.convert_score_to_band_index(score_str)
                 })
             except FileNotFoundError:
                 logger.warning(f"Skipping {student_id} - report not found")
@@ -148,7 +190,8 @@ class ChemistryDataLoader:
                     'student_id': student_id,
                     'report_text': report_text,
                     'actual_score': score,
-                    'score_band': score_str
+                    'score_band': score_str,
+                    'band_index': self.convert_score_to_band_index(score_str)
                 })
             except FileNotFoundError:
                 logger.warning(f"Skipping {student_id} - report not found")
@@ -176,6 +219,54 @@ class ChemistryDataLoader:
         }
         
         return score_map.get(score_str, 3.5)  # Default to middle if unknown
+    
+    def convert_score_to_band_index(self, score_str: str) -> int:
+        """Convert score string to band index (0-3) for QWK calculation."""
+        # Map score bands to indices
+        # 0 -> 0, 1-2 -> 1, 3-4 -> 2, 5-6 -> 3
+        band_map = {
+            '0': 0,
+            '1-2': 1,
+            '1': 1,  # Individual scores map to their band
+            '2': 1,
+            '3-4': 2,
+            '3': 2,
+            '4': 2,
+            '5-6': 3,
+            '5': 3,
+            '6': 3
+        }
+        
+        return band_map.get(score_str, 2)  # Default to middle band if unknown
+    
+    def get_band_from_index(self, index: int) -> str:
+        """Convert band index (0-3) back to band string."""
+        band_names = ['0', '1-2', '3-4', '5-6']
+        if 0 <= index <= 3:
+            return band_names[index]
+        return '3-4'  # Default to middle band
+    
+    def convert_numeric_score_to_band(self, score: float) -> str:
+        """Convert numeric score to band string."""
+        if score <= 0.5:
+            return '0'
+        elif score < 2.5:
+            return '1-2'
+        elif score < 4.5:
+            return '3-4'
+        else:
+            return '5-6'
+    
+    def convert_numeric_score_to_band_index(self, score: float) -> int:
+        """Convert numeric score to band index (0-3)."""
+        if score <= 0.5:
+            return 0  # Band '0'
+        elif score < 2.5:
+            return 1  # Band '1-2'
+        elif score < 4.5:
+            return 2  # Band '3-4'
+        else:
+            return 3  # Band '5-6'
     
     def get_all_criteria_numbers(self) -> List[int]:
         """Get list of all criterion numbers (1-12)."""

@@ -1,0 +1,4 @@
+student_id,actual_band,actual_band_index,predicted_band,predicted_band_index,confidence,original_score,original_pred_band,og_original_score,og_original_pred_band,elo_score,elo_pred_band,optimized_score,optimized_pred_band,actual_score,primary_score,strategy,num_comparisons
+S6,5-6,3,3-4,2,medium,4.5,3-4,4.5,3-4,3.5254691856582934,3-4,3.5,3-4,5.5,4.5,original,6
+S7,5-6,3,3-4,2,medium,4.5,3-4,4.5,3-4,3.5254691856582934,3-4,3.5,3-4,5.5,4.5,original,6
+S8,5-6,3,5-6,3,medium,5.25,5-6,5.5,5-6,4.281436022381778,3-4,5.5,5-6,5.5,5.25,original,6

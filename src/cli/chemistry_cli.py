@@ -125,34 +125,85 @@ class ChemistryCLI:
         """Print grading summary."""
         if isinstance(results, dict) and 'criterion_number' in results:
             # Single criterion result
+            model = results.get('model', 'unknown')
+            clean_model = model.replace('openai:', '').replace(':', '_').replace('-', '_')
             print(f"\n{'='*50}")
-            print(f"Criterion {results['criterion_number']} Grading Summary")
+            print(f"Criterion {results['criterion_number']} Grading Summary ({clean_model})")
             print(f"{'='*50}")
-            print(f"QWK Score: {results.get('qwk', 0):.3f}")
+            
+            # Display distribution of misses for all methods
+            all_distributions = results.get('miss_distribution', {})
+            if all_distributions:
+                print("Prediction Distributions:")
+                for method in ['original', 'og_original', 'primary']:
+                    if method in all_distributions:
+                        dist = all_distributions[method]
+                        dist_str = ', '.join([f"{d}: {c}" for d, c in sorted(dist.items())])
+                        method_name = method.replace('_', ' ').title()
+                        print(f"  {method_name}: {dist_str}")
+            
             print(f"Reports Graded: {len(results.get('results', []))}")
             print(f"Strategy: {results.get('strategy', 'unknown')}")
+            print(f"Model: {clean_model}")
         else:
             # Multiple criteria results
             print(f"\n{'='*50}")
             print(f"Chemistry Criteria Grading Summary")
             print(f"{'='*50}")
             
-            total_qwk = 0
             valid_count = 0
             
             for criterion_num, criterion_results in results.items():
-                if 'qwk' in criterion_results:
-                    qwk = criterion_results['qwk']
-                    total_qwk += qwk
+                if 'miss_distribution' in criterion_results:
+                    all_distributions = criterion_results['miss_distribution']
+                    print(f"Criterion {criterion_num}:")
+                    for method in ['original', 'og_original', 'primary']:
+                        if method in all_distributions:
+                            dist = all_distributions[method]
+                            dist_str = ', '.join([f"{d}: {c}" for d, c in sorted(dist.items())])
+                            method_name = method.replace('_', ' ').title()
+                            print(f"  {method_name}: {dist_str}")
+                    print()  # Add blank line between criteria
                     valid_count += 1
-                    print(f"Criterion {criterion_num}: QWK = {qwk:.3f}")
                 elif 'error' in criterion_results:
                     print(f"Criterion {criterion_num}: ERROR - {criterion_results['error']}")
             
             if valid_count > 0:
-                avg_qwk = total_qwk / valid_count
-                print(f"\nAverage QWK: {avg_qwk:.3f}")
                 print(f"Criteria Graded: {valid_count}/{len(results)}")
+                
+                # Show overall summary if multiple criteria were graded
+                if valid_count > 1:
+                    print(f"\n{'='*50}")
+                    print("OVERALL DISTRIBUTION SUMMARY")
+                    print(f"{'='*50}")
+                    
+                    # Calculate overall distributions
+                    overall_distributions = {'original': {0: 0, 1: 0, 2: 0, 3: 0}, 
+                                           'og_original': {0: 0, 1: 0, 2: 0, 3: 0},
+                                           'majority_vote': {0: 0, 1: 0, 2: 0, 3: 0},
+                                           'primary': {0: 0, 1: 0, 2: 0, 3: 0}}
+                    
+                    for criterion_num, criterion_results in results.items():
+                        if 'miss_distribution' in criterion_results:
+                            criterion_dists = criterion_results['miss_distribution']
+                            for method in ['original', 'og_original', 'majority_vote', 'primary']:
+                                if method in criterion_dists:
+                                    for distance, count in criterion_dists[method].items():
+                                        overall_distributions[method][distance] += count
+                    
+                    # Display overall summary
+                    for method in ['original', 'og_original', 'majority_vote', 'primary']:
+                        if method in overall_distributions:
+                            dist = overall_distributions[method]
+                            total_predictions = sum(dist.values())
+                            accuracy = (dist[0] / total_predictions * 100) if total_predictions > 0 else 0
+                            
+                            method_name = method.replace('_', ' ').title()
+                            dist_str = ', '.join([f"{d}: {c}" for d, c in sorted(dist.items())])
+                            print(f"{method_name}: {dist_str} (Accuracy: {accuracy:.1f}%)")
+                    
+                    print(f"\nTotal criteria combined: {valid_count}")
+                    print("Overall summary exported to Google Sheets")
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -186,7 +237,7 @@ def create_parser() -> argparse.ArgumentParser:
         '--strategy',
         type=str,
         default='original',
-        choices=['original', 'optimized'],
+        choices=['original', 'optimized', 'og_original', 'elo'],
         help='Scoring strategy to use'
     )
     

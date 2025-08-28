@@ -29,45 +29,42 @@ class ChemistryCriteriaComparisonEngine:
         """Create a comparison prompt for a specific chemistry criterion."""
         
         # Format the rubric for this criterion
-        rubric_text = f"""Criterion {criterion_number} Rubric:
+        rubric_text = f"""
 5-6 points: {criterion_rubric.get('5-6', 'N/A')}
 3-4 points: {criterion_rubric.get('3-4', 'N/A')}  
 1-2 points: {criterion_rubric.get('1-2', 'N/A')}
 0 points: {criterion_rubric.get('0', 'N/A')}"""
         
-        prompt = f"""You are an expert scientific report grader evaluating chemistry student investigation reports.
+        prompt = f"""You are evaluating chemistry student investigation reports.
 
-You are grading reports based on a specific criterion from a chemistry investigation rubric.
-
+You are grading this specific section of the rubric.
 {rubric_text}
-
 Report A was graded {score_a} by an expert grader on this specific criterion:
 
 <REPORT_A>
 {report_a}
 </REPORT_A>
 
-We want to compare it to Report B on this specific criterion ONLY:
+We want to compare it to Report B on THE SPECIFIC CRITERION ONLY:
 
 <REPORT_B>
 {report_b}
 </REPORT_B>
 
-TASK: Which report performed better on Criterion {criterion_number} specifically?
+TASK: Which report performed better on the criterion evaluated?
 
 Instructions:
-1. Focus ONLY on Criterion {criterion_number} - ignore all other aspects of the reports
+1. Focus ONLY on the criterion evaluated - ignore all other aspects of the reports
 2. Evaluate how well each report meets the descriptors for this criterion
 3. Compare the quality of both reports on this specific criterion
 4. Make a forced choice - Report A or Report B performed better on this criterion
 
 Respond in the following JSON format:
 {{
-    "winner": "A" | "B",
+    "report_a_band": "5-6" | "3-4" | "1-2" | "0",
+    "report_b_band": "5-6" | "3-4" | "1-2" | "0",
     "reasoning": "Brief explanation (max 100 words) of why the winner performed better on this specific criterion",
-    "report_a_level": "5-6" | "3-4" | "1-2" | "0",
-    "report_b_level": "5-6" | "3-4" | "1-2" | "0",
-    "confidence": "high" | "medium" | "low"
+    "winner": "A" | "B"
 }}
 
 Respond ONLY with valid JSON. No markdown, no extra text."""
@@ -108,6 +105,14 @@ Respond ONLY with valid JSON. No markdown, no extra text."""
             logger.error(f"Failed to parse comparison response for criterion {criterion_number}: {e}")
             logger.debug(f"Raw response: {response[:200]}...")
             return self._create_fallback_result()
+        except ValueError as e:
+            # Handle specific Gemini errors (safety filter, etc.)
+            if "safety filter" in str(e).lower() or "blocked" in str(e).lower():
+                logger.warning(f"Criterion {criterion_number} comparison blocked by AI safety filter: {e}")
+                logger.info(f"Consider using a different model (e.g., Claude) to avoid safety filter issues")
+            else:
+                logger.error(f"Criterion {criterion_number} comparison error: {e}")
+            return self._create_fallback_result()
         except Exception as e:
             logger.error(f"Error in criterion {criterion_number} comparison: {e}")
             return self._create_fallback_result()
@@ -142,12 +147,21 @@ Respond ONLY with valid JSON. No markdown, no extra text."""
                     result['sample_id'] = sample['student_id']
                     result['sample_score'] = sample['criterion_score']
                     result['sample_score_band'] = sample['score_band']
+                    result['sample_band_index'] = sample.get('band_index')
+                    # Add predicted bands from model (new format)
+                    result['predicted_sample_band'] = result.get('report_a_band')
+                    result['predicted_test_band'] = result.get('report_b_band')
                     comparisons.append(result)
                     
                     logger.debug(f"Criterion {criterion_number} comparison with {sample['student_id']}: {result['winner']}")
                     
                 except Exception as e:
-                    logger.error(f"Comparison with sample {sample['student_id']} failed: {e}")
+                    # Enhanced error handling for specific issues
+                    if "safety filter" in str(e).lower() or "blocked" in str(e).lower():
+                        logger.warning(f"Comparison with sample {sample['student_id']} blocked by safety filter")
+                        logger.info(f"Suggestion: Switch to Claude model to avoid Gemini safety restrictions")
+                    else:
+                        logger.error(f"Comparison with sample {sample['student_id']} failed: {e}")
                     # Add a fallback result
                     comparisons.append({
                         'winner': 'A',
@@ -190,6 +204,5 @@ Respond ONLY with valid JSON. No markdown, no extra text."""
         return {
             'winner': 'A',
             'reasoning': 'Comparison failed - defaulting to sample',
-            'confidence': 'low',
             'error': True
         }

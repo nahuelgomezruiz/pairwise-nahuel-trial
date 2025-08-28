@@ -2,10 +2,17 @@
 
 import logging
 from typing import Dict, List, Any, Tuple, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from src.data_management.chemistry_data_loader import ChemistryDataLoader
 from .chemistry_comparison_engine import ChemistryCriteriaComparisonEngine
-from .scoring_strategies import OriginalScoringStrategy, OptimizedScoringStrategy
+from .scoring_strategies import (
+    OriginalScoringStrategy, 
+    OptimizedScoringStrategy,
+    OGOriginalScoringStrategy,
+    EloScoringStrategy,
+    MajorityVotingStrategy
+)
 
 logger = logging.getLogger(__name__)
 
@@ -13,18 +20,26 @@ logger = logging.getLogger(__name__)
 class ChemistryCriteriaGrader:
     """Grades chemistry reports on individual criteria using pairwise comparisons."""
     
-    def __init__(self, model: str = "openai:gpt-5-mini", tracer=None):
+    def __init__(self, model: str = "openai:gpt-5-mini", tracer=None, preload_reports: bool = True):
         """Initialize the chemistry criteria grader."""
         self.model = model
         self.data_loader = ChemistryDataLoader()
         self.comparison_engine = ChemistryCriteriaComparisonEngine(model=model, tracer=tracer)
         
-        # Initialize scoring strategies
+        # Initialize scoring strategies (copy from original pairwise grader)
         self.scoring_strategies = {
             'original': OriginalScoringStrategy(),
-            'optimized': OptimizedScoringStrategy()
+            'optimized': OptimizedScoringStrategy(),
+            'og_original': OGOriginalScoringStrategy(),
+            'elo': EloScoringStrategy(k_factor=32, initial_rating=1500),  # 1500 = middle rating between 1200-1800
+            'majority_vote': MajorityVotingStrategy()  # New majority voting strategy
         }
-        self.default_strategy = 'original'
+        self.default_strategy = 'original'  # Use original scoring by default
+        
+        # PERFORMANCE OPTIMIZATION: Preload all reports at startup
+        if preload_reports:
+            logger.info("Preloading all reports for optimal performance...")
+            self.data_loader.preload_all_reports()
         
         logger.info(f"Initialized ChemistryCriteriaGrader with model: {model}")
     
@@ -47,10 +62,30 @@ class ChemistryCriteriaGrader:
         # Calculate score based on comparisons
         # We need to adjust the scoring to work with the specific criterion scores
         adjusted_comparisons = self._adjust_comparisons_for_scoring(comparisons)
-        predicted_score = scoring_strategy.calculate_score(adjusted_comparisons)
+        
+        # Calculate ALL scoring methods for analysis
+        all_scores = {}
+        for method_name, method_strategy in self.scoring_strategies.items():
+            try:
+                score = method_strategy.calculate_score(adjusted_comparisons)
+                all_scores[method_name] = {'score': score}
+            except Exception as e:
+                logger.warning(f"Failed to calculate {method_name} score: {e}")
+                all_scores[method_name] = {'score': 3.5}
+        
+        # Get the primary strategy result
+        primary_result = all_scores.get(strategy_name, all_scores['original'])
+        
+        # Convert primary score to band prediction
+        primary_score = primary_result['score']
+        predicted_band = self.data_loader.convert_numeric_score_to_band(primary_score)
+        predicted_band_index = self.data_loader.convert_numeric_score_to_band_index(primary_score)
         
         return {
-            'predicted_score': predicted_score,
+            'predicted_score': primary_score,
+            'predicted_band_index': predicted_band_index,
+            'predicted_band': predicted_band,
+            'all_scores': all_scores,
             'comparisons': comparisons,
             'strategy_used': strategy_name,
             'criterion_number': criterion_number
@@ -59,8 +94,17 @@ class ChemistryCriteriaGrader:
     def grade_criterion(self, 
                        criterion_number: int,
                        limit: Optional[int] = None,
-                       strategy: str = None) -> Tuple[List[Dict], List[float], List[float]]:
-        """Grade all test reports on a specific criterion."""
+                       strategy: str = None,
+                       max_parallel_reports: int = 10) -> Tuple[List[Dict], List[float], List[float]]:
+        """Grade all test reports on a specific criterion with parallelization.
+        
+        Args:
+            criterion_number: The criterion to grade
+            limit: Maximum number of test reports to grade
+            strategy: Scoring strategy to use
+            max_parallel_reports: Maximum number of reports to grade in parallel
+                                 (each report makes 6 comparisons, so 10 reports = 60 parallel calls)
+        """
         
         logger.info(f"Starting grading for Criterion {criterion_number}")
         
@@ -81,13 +125,16 @@ class ChemistryCriteriaGrader:
             logger.error(f"No test reports found for criterion {criterion_number}")
             return [], [], []
         
+        logger.info(f"Grading {len(test_reports)} test reports on Criterion {criterion_number} "
+                   f"with {max_parallel_reports} parallel reports")
+        
         results = []
         predicted_scores = []
         actual_scores = []
         
-        logger.info(f"Grading {len(test_reports)} test reports on Criterion {criterion_number}")
-        
-        for idx, test_report in enumerate(test_reports):
+        # Process reports in parallel batches
+        def grade_single_report(test_report, idx):
+            """Helper function to grade a single report."""
             student_id = test_report['student_id']
             report_text = test_report['report_text']
             actual_score = test_report['actual_score']
@@ -103,20 +150,44 @@ class ChemistryCriteriaGrader:
                 'student_id': student_id,
                 'actual_score': actual_score,
                 'actual_score_band': test_report['score_band'],
+                'actual_band_index': test_report.get('band_index', 2),
                 'predicted_score': grading_result['predicted_score'],
+                'predicted_band': grading_result.get('predicted_band'),
+                'predicted_band_index': grading_result.get('predicted_band_index'),
+                'all_scores': grading_result.get('all_scores', {}),
                 'comparisons': grading_result['comparisons'],
                 'report_text': report_text,
                 'strategy_used': grading_result['strategy_used'],
                 'criterion_number': criterion_number
             }
             
-            results.append(result)
-            predicted_scores.append(grading_result['predicted_score'])
-            actual_scores.append(actual_score)
-            
             logger.info(f"Student {student_id} - Criterion {criterion_number}: "
                        f"Predicted={grading_result['predicted_score']:.2f}, "
                        f"Actual={actual_score} ({test_report['score_band']})")
+            
+            return result, grading_result['predicted_score'], actual_score
+        
+        # Use ThreadPoolExecutor for parallel grading
+        with ThreadPoolExecutor(max_workers=max_parallel_reports) as executor:
+            # Submit all grading tasks
+            futures = {
+                executor.submit(grade_single_report, test_report, idx): idx
+                for idx, test_report in enumerate(test_reports)
+            }
+            
+            # Collect results as they complete
+            for future in as_completed(futures):
+                idx = futures[future]
+                try:
+                    result, pred_score, actual_score = future.result(timeout=60)
+                    results.append(result)
+                    predicted_scores.append(pred_score)
+                    actual_scores.append(actual_score)
+                except Exception as e:
+                    logger.error(f"Failed to grade report at index {idx}: {e}")
+        
+        # Sort results by student ID to maintain consistency
+        results.sort(key=lambda x: x['student_id'])
         
         return results, predicted_scores, actual_scores
     
@@ -151,12 +222,12 @@ class ChemistryCriteriaGrader:
                 'sample_score': comp.get('sample_score', 3.5),
                 'comparison': {
                     'winner': strategy_winner,
-                    'reasoning': comp.get('reasoning', ''),
-                    'confidence': comp.get('confidence', 'medium')
+                    'reasoning': comp.get('reasoning', '')
                 },
                 # Keep additional fields for reference
                 'sample_id': comp.get('sample_id', ''),
                 'sample_score_band': comp.get('sample_score_band', ''),
+                'sample_band_index': comp.get('sample_band_index'),
                 'criterion_number': comp.get('criterion_number', 0)
             }
             

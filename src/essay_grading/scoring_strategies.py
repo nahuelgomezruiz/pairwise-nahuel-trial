@@ -524,3 +524,67 @@ class OGOriginalScoringStrategy(ScoringStrategy):
     
     def get_name(self) -> str:
         return "og_original"
+
+
+class MajorityVotingStrategy(ScoringStrategy):
+    """Scoring strategy using majority voting on model's predicted bands for the test report."""
+    
+    def calculate_score(self, comparisons: List[Dict]) -> float:
+        """Calculate score using majority voting on predicted test bands.
+        
+        The model predicts a band for the test report (report_b_band) in each comparison.
+        We take the majority vote among all predictions. In case of a tie, we pick the highest band.
+        """
+        if not comparisons:
+            return 3.5  # Default middle score (3-4 band)
+        
+        # Collect all predicted bands for the test report
+        band_votes = []
+        
+        for comp in comparisons:
+            # Get the predicted band for the test report (report B)
+            predicted_band = comp.get('predicted_test_band') or comp.get('report_b_band')
+            
+            if predicted_band and predicted_band != '-':
+                band_votes.append(predicted_band)
+        
+        if not band_votes:
+            logger.warning("No valid band predictions found in comparisons")
+            return 3.5
+        
+        # Count votes for each band
+        from collections import Counter
+        band_counts = Counter(band_votes)
+        
+        # Get the maximum vote count
+        max_votes = max(band_counts.values())
+        
+        # Get all bands with the maximum votes (to handle ties)
+        top_bands = [band for band, count in band_counts.items() if count == max_votes]
+        
+        # If there's a tie, pick the highest band
+        if len(top_bands) > 1:
+            # Define band order from lowest to highest
+            band_order = {'0': 0, '1-2': 1.5, '3-4': 3.5, '5-6': 5.5}
+            # Pick the band with the highest numeric value
+            winning_band = max(top_bands, key=lambda b: band_order.get(b, 0))
+            logger.debug(f"Tie between bands {top_bands}, choosing highest: {winning_band}")
+        else:
+            winning_band = top_bands[0]
+        
+        # Convert band to numeric score
+        band_to_score = {
+            '5-6': 5.5,
+            '3-4': 3.5,
+            '1-2': 1.5,
+            '0': 0
+        }
+        
+        score = band_to_score.get(winning_band, 3.5)
+        
+        logger.debug(f"Majority voting: {band_counts} -> {winning_band} -> {score}")
+        
+        return score
+    
+    def get_name(self) -> str:
+        return "majority_vote"
